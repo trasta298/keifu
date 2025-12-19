@@ -1,7 +1,12 @@
 //! アプリケーション状態管理
 
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+
 use anyhow::Result;
 use ratatui::widgets::ListState;
+
+use git2::Oid;
 
 use crate::{
     action::Action,
@@ -9,7 +14,7 @@ use crate::{
         build_graph,
         graph::GraphLayout,
         operations::{checkout_branch, checkout_commit, create_branch, delete_branch, merge_branch, rebase_branch},
-        BranchInfo, CommitInfo, GitRepository,
+        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository,
     },
 };
 
@@ -44,6 +49,12 @@ pub enum ConfirmAction {
     Rebase(String),
 }
 
+/// 非同期diff計算の結果
+struct DiffResult {
+    oid: Oid,
+    diff: Option<CommitDiffInfo>,
+}
+
 /// アプリケーション状態
 pub struct App {
     pub mode: AppMode,
@@ -58,6 +69,12 @@ pub struct App {
 
     // UI状態
     pub graph_list_state: ListState,
+
+    // diffキャッシュ（非同期ロード）
+    diff_cache: Option<CommitDiffInfo>,
+    diff_cache_oid: Option<Oid>,
+    diff_loading_oid: Option<Oid>,
+    diff_receiver: Option<Receiver<DiffResult>>,
 
     // フラグ
     pub should_quit: bool,
@@ -87,6 +104,10 @@ impl App {
             branches,
             graph_layout,
             graph_list_state,
+            diff_cache: None,
+            diff_cache_oid: None,
+            diff_loading_oid: None,
+            diff_receiver: None,
             should_quit: false,
             message: None,
         })
@@ -99,6 +120,12 @@ impl App {
         self.graph_layout = build_graph(&self.commits, &self.branches);
         self.head_name = self.repo.head_name();
 
+        // キャッシュをクリア
+        self.diff_cache = None;
+        self.diff_cache_oid = None;
+        self.diff_loading_oid = None;
+        self.diff_receiver = None;
+
         // 選択位置を調整
         let max_commit = self.graph_layout.nodes.len().saturating_sub(1);
         if let Some(selected) = self.graph_list_state.selected() {
@@ -108,6 +135,65 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// 選択中コミットのdiff情報を更新（非同期）
+    pub fn update_diff_cache(&mut self) {
+        // 完了した結果があれば取り込む
+        if let Some(ref receiver) = self.diff_receiver {
+            if let Ok(result) = receiver.try_recv() {
+                self.diff_cache = result.diff;
+                self.diff_cache_oid = Some(result.oid);
+                self.diff_loading_oid = None;
+                self.diff_receiver = None;
+            }
+        }
+
+        let selected_oid = self.graph_list_state.selected().and_then(|idx| {
+            self.graph_layout
+                .nodes
+                .get(idx)
+                .and_then(|node| node.commit.as_ref().map(|c| c.oid))
+        });
+
+        let Some(oid) = selected_oid else {
+            return;
+        };
+
+        // キャッシュが有効なら何もしない
+        if self.diff_cache_oid == Some(oid) {
+            return;
+        }
+
+        // 既に読み込み中なら何もしない
+        if self.diff_loading_oid == Some(oid) {
+            return;
+        }
+
+        // バックグラウンドでdiffを計算
+        let (tx, rx) = mpsc::channel();
+        let repo_path = self.repo_path.clone();
+
+        self.diff_loading_oid = Some(oid);
+        self.diff_receiver = Some(rx);
+
+        thread::spawn(move || {
+            let diff = git2::Repository::open(&repo_path)
+                .ok()
+                .and_then(|repo| CommitDiffInfo::from_commit(&repo, oid).ok());
+
+            let _ = tx.send(DiffResult { oid, diff });
+        });
+    }
+
+    /// キャッシュされたdiff情報を取得
+    pub fn cached_diff(&self) -> Option<&CommitDiffInfo> {
+        self.diff_cache.as_ref()
+    }
+
+    /// diffが読み込み中かどうか
+    pub fn is_diff_loading(&self) -> bool {
+        self.diff_loading_oid.is_some()
     }
 
     /// アクションを処理

@@ -23,6 +23,9 @@ use self::{
 
 /// メインUIを描画
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    // diffキャッシュを更新（描画前に1回だけ）
+    app.update_diff_cache();
+
     let area = frame.area();
 
     // 縦分割: メイン + ステータスバー(1行)
