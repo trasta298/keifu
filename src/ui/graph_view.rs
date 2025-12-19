@@ -53,7 +53,8 @@ impl<'a> GraphViewWidget<'a> {
 /// ブランチ名の表示を最適化
 /// - ローカルブランチと対応するorigin/xxxが一致している場合は「xxx ↔ origin」と表示
 /// - それ以外は従来通り個別に表示
-fn optimize_branch_display(branch_names: &[String], is_head: bool) -> Vec<(String, Style)> {
+/// - グラフのレーン色で太文字表示、カッコで囲む
+fn optimize_branch_display(branch_names: &[String], is_head: bool, lane: usize) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
     if branch_names.is_empty() {
@@ -75,32 +76,30 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool) -> Vec<(Strin
         .map(|s| s.as_str())
         .collect();
 
+    // スタイル: グラフのレーン色で太文字（HEADは緑）
+    let base_color = if is_head { Color::Green } else { get_lane_color(lane) };
+    let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
+
     // ローカルブランチを処理
-    for (i, local) in local_branches.iter().enumerate() {
+    for local in local_branches.iter() {
         let remote_name = format!("origin/{}", local);
         let has_matching_remote = remote_branches.contains(remote_name.as_str());
 
-        let style = if is_head && i == 0 {
-            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::Yellow)
-        };
-
         if has_matching_remote {
             // ローカルとリモートが一致 → 簡潔表示
-            result.push((format!("{} ↔ origin", local), style));
+            result.push((format!("[{} ↔ origin]", local), style));
             processed_remotes.insert(remote_name);
         } else {
             // ローカルのみ
-            result.push((local.to_string(), style));
+            result.push((format!("[{}]", local), style));
         }
     }
 
-    // 対応するローカルがないリモートブランチを追加
+    // 対応するローカルがないリモートブランチを追加（LightRedで見やすく表示）
+    let remote_style = Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD);
     for remote in branch_names.iter().filter(|n| n.starts_with("origin/")) {
         if !processed_remotes.contains(remote) {
-            let style = Style::default().fg(Color::Black).bg(Color::Red);
-            result.push((remote.clone(), style));
+            result.push((format!("[{}]", remote), remote_style));
         }
     }
 
@@ -197,7 +196,7 @@ fn render_graph_line<'a>(
     // === 左寄せ部分: ブランチ名 + メッセージ ===
 
     // ブランチ名を最適化（local と origin/local が一致している場合は簡潔に表示）
-    let branch_display = optimize_branch_display(&node.branch_names, node.is_head);
+    let branch_display = optimize_branch_display(&node.branch_names, node.is_head, node.lane);
 
     // === 右寄せ部分: 日時 author hash（固定幅） ===
     let date = commit.timestamp.format("%Y-%m-%d").to_string();  // 10文字
@@ -210,15 +209,14 @@ fn render_graph_line<'a>(
     // スペース1 + 日付10 + スペース2 + author8 + スペース2 + hash7 + スペース1 = 31
     const RIGHT_FIXED_WIDTH: usize = 31;
 
-    // ブランチ名を表示
+    // ブランチ名を表示（カッコ付きで太文字、グラフと同じ色）
     for (i, (label, style)) in branch_display.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw(" "));
             left_width += 1;
         }
-        let formatted = format!(" {} ", label);
-        left_width += display_width(&formatted);
-        spans.push(Span::styled(formatted, *style));
+        left_width += display_width(label);
+        spans.push(Span::styled(label.clone(), *style));
     }
     if !branch_display.is_empty() {
         spans.push(Span::raw(" "));
