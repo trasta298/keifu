@@ -82,7 +82,7 @@ impl App {
 
         let commits = repo.get_commits(500)?;
         let branches = repo.get_branches()?;
-        let graph_layout = build_graph(&commits);
+        let graph_layout = build_graph(&commits, &branches);
 
         let mut branch_list_state = ListState::default();
         let mut graph_list_state = ListState::default();
@@ -112,7 +112,7 @@ impl App {
     pub fn refresh(&mut self) -> Result<()> {
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
-        self.graph_layout = build_graph(&self.commits);
+        self.graph_layout = build_graph(&self.commits, &self.branches);
         self.head_name = self.repo.head_name();
 
         // 選択位置を調整

@@ -11,7 +11,7 @@ use ratatui::{
 use crate::{
     app::{App, PaneFocus},
     git::graph::GraphNode,
-    graph::{colors::get_lane_color, GraphChars},
+    graph::colors::get_lane_color,
 };
 
 pub struct GraphViewWidget<'a> {
@@ -21,9 +21,8 @@ pub struct GraphViewWidget<'a> {
 
 impl<'a> GraphViewWidget<'a> {
     pub fn new(app: &App) -> Self {
-        let chars = GraphChars::default();
         let max_lane = app.graph_layout.max_lane;
-        let graph_width = (max_lane + 1) * 2;
+        let graph_width = (max_lane + 1) * 2 + 1;
 
         let items: Vec<ListItem> = app
             .graph_layout
@@ -32,7 +31,7 @@ impl<'a> GraphViewWidget<'a> {
             .enumerate()
             .map(|(idx, node)| {
                 let is_selected = app.graph_list_state.selected() == Some(idx);
-                let line = render_graph_line_with_commit(node, max_lane, is_selected, &chars, graph_width);
+                let line = render_graph_line_with_commit(node, max_lane, is_selected, graph_width);
                 ListItem::new(line)
             })
             .collect();
@@ -48,7 +47,6 @@ fn render_graph_line_with_commit<'a>(
     node: &GraphNode,
     max_lane: usize,
     is_selected: bool,
-    chars: &GraphChars,
     graph_width: usize,
 ) -> Line<'a> {
     let mut spans: Vec<Span> = Vec::new();
@@ -59,12 +57,18 @@ fn render_graph_line_with_commit<'a>(
     for col in 0..=max_lane {
         if col == lane {
             // コミットノード
-            let commit_char = if is_selected {
-                chars.commit_selected
+            let commit_char = if node.is_head {
+                '◉'  // HEAD
+            } else if is_selected {
+                '●'
             } else {
-                chars.commit
+                '○'
             };
-            let style = Style::default().fg(color);
+            let style = if node.is_head {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color)
+            };
             spans.push(Span::styled(commit_char.to_string(), style));
         } else {
             // アクティブなレーンのみ縦線を描画
@@ -77,16 +81,17 @@ fn render_graph_line_with_commit<'a>(
             }
         }
 
-        // レーン間のスペース
+        // レーン間のスペースと接続線
         if col < max_lane {
-            // 接続線があれば横線または角を描画
-            let has_horizontal = node.connections.iter().any(|conn| {
-                let min = conn.source_lane.min(conn.target_lane);
-                let max_conn = conn.source_lane.max(conn.target_lane);
-                col >= min && col < max_conn
+            // このノードから他レーンへの接続があるか確認
+            let has_branch_out = node.connections.iter().any(|conn| {
+                conn.source_lane == lane && conn.target_lane > lane && col >= lane && col < conn.target_lane
+            });
+            let has_merge_in = node.connections.iter().any(|conn| {
+                conn.source_lane == lane && conn.target_lane < lane && col >= conn.target_lane && col < lane
             });
 
-            if has_horizontal {
+            if has_branch_out || has_merge_in {
                 spans.push(Span::styled("─", Style::default().fg(color)));
             } else {
                 spans.push(Span::raw(" "));
@@ -95,13 +100,29 @@ fn render_graph_line_with_commit<'a>(
     }
 
     // グラフ幅を揃えるためのパディング
-    let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
+    let current_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     if current_width < graph_width {
         spans.push(Span::raw(" ".repeat(graph_width - current_width)));
     }
 
     // セパレータ
     spans.push(Span::raw(" "));
+
+    // ブランチ名を表示（あれば）
+    if !node.branch_names.is_empty() {
+        for (i, name) in node.branch_names.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+            let branch_style = if node.is_head {
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Black).bg(Color::Yellow)
+            };
+            spans.push(Span::styled(format!(" {} ", name), branch_style));
+        }
+        spans.push(Span::raw(" "));
+    }
 
     // コミット情報
     let commit = &node.commit;
@@ -117,18 +138,18 @@ fn render_graph_line_with_commit<'a>(
     spans.push(Span::styled(commit.short_id.clone(), hash_style));
     spans.push(Span::raw(" "));
 
-    // 著者名（最大10文字）
-    let author: String = commit.author_name.chars().take(10).collect();
-    spans.push(Span::styled(format!("{:<10}", author), author_style));
+    // 著者名（最大8文字）
+    let author: String = commit.author_name.chars().take(8).collect();
+    spans.push(Span::styled(format!("{:<8}", author), author_style));
     spans.push(Span::raw(" "));
 
     // 日時
-    let date = commit.timestamp.format("%m-%d %H:%M").to_string();
+    let date = commit.timestamp.format("%m-%d").to_string();
     spans.push(Span::styled(date, date_style));
     spans.push(Span::raw(" "));
 
-    // メッセージ（残りの幅に収まるように）
-    let message: String = commit.message.chars().take(50).collect();
+    // メッセージ
+    let message: String = commit.message.chars().take(40).collect();
     spans.push(Span::styled(message, msg_style));
 
     Line::from(spans)
