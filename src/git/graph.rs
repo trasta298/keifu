@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use git2::Oid;
 
 use super::{BranchInfo, CommitInfo};
+use crate::graph::colors::ColorAssigner;
 
 /// グラフノード
 #[derive(Debug, Clone)]
@@ -13,6 +14,8 @@ pub struct GraphNode {
     pub commit: Option<CommitInfo>,
     /// このコミットのレーン位置
     pub lane: usize,
+    /// このノードのカラーインデックス
+    pub color_index: usize,
     /// このコミットを指すブランチ名のリスト
     pub branch_names: Vec<String>,
     /// HEADがこのコミットを指しているか
@@ -89,14 +92,19 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut max_lane: usize = 0;
 
+    // 色管理
+    let mut color_assigner = ColorAssigner::new();
+    // OID -> カラーインデックスのマッピング
+    let mut oid_color_index: HashMap<Oid, usize> = HashMap::new();
+
     for commit in commits {
         // このコミットのOIDを追跡中のレーンを探す
-        let commit_lane = lanes
+        let commit_lane_opt = lanes
             .iter()
             .position(|l| l.map(|oid| oid == commit.oid).unwrap_or(false));
 
         // レーンを決定
-        let lane = if let Some(l) = commit_lane {
+        let lane = if let Some(l) = commit_lane_opt {
             l
         } else {
             // 空きレーンを探すか、新規作成
@@ -109,14 +117,24 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             }
         };
 
+        // カラーインデックスを決定
+        let commit_color_index = if commit_lane_opt.is_some() {
+            // 既存のブランチを継続
+            color_assigner.continue_lane(lane)
+        } else {
+            // 新しいブランチ開始 - 新しい色を割り当て
+            color_assigner.assign_color(lane)
+        };
+        oid_color_index.insert(commit.oid, commit_color_index);
+
         // このコミットのレーンをクリア
         if lane < lanes.len() {
             lanes[lane] = None;
         }
 
         // 親コミットの処理
-        // (OID, レーン, 既存追跡か否か)
-        let mut parent_lanes: Vec<(Oid, usize, bool)> = Vec::new();
+        // (OID, レーン, 既存追跡か否か, カラーインデックス)
+        let mut parent_lanes: Vec<(Oid, usize, bool, usize)> = Vec::new();
         let valid_parents: Vec<Oid> = commit
             .parent_oids
             .iter()
@@ -130,14 +148,17 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 .iter()
                 .position(|l| l.map(|oid| oid == *parent_oid).unwrap_or(false));
 
-            let (parent_lane, was_existing) = if let Some(pl) = existing_parent_lane {
-                (pl, true)
+            let (parent_lane, was_existing, parent_color) = if let Some(pl) = existing_parent_lane {
+                // 既存レーン - 既存の色を使用
+                let color = oid_color_index.get(parent_oid).copied().unwrap_or(pl);
+                (pl, true, color)
             } else if parent_idx == 0 {
-                // 最初の親は同じレーンを使用
+                // 最初の親は同じレーンを使用 - 同じ色を継承
                 lanes[lane] = Some(*parent_oid);
-                (lane, false)
+                oid_color_index.insert(*parent_oid, commit_color_index);
+                (lane, false, commit_color_index)
             } else {
-                // 2番目以降の親は別レーンを使用
+                // 2番目以降の親は別レーンを使用 - 新しい色を割り当て
                 let empty = lanes.iter().position(|l| l.is_none());
                 let new_lane = if let Some(l) = empty {
                     l
@@ -146,33 +167,42 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                     lanes.len() - 1
                 };
                 lanes[new_lane] = Some(*parent_oid);
-                (new_lane, false)
+                let new_color = color_assigner.assign_color(new_lane);
+                oid_color_index.insert(*parent_oid, new_color);
+                (new_lane, false, new_color)
             };
 
-            parent_lanes.push((*parent_oid, parent_lane, was_existing));
+            parent_lanes.push((*parent_oid, parent_lane, was_existing, parent_color));
         }
 
         // max_laneを更新
         max_lane = max_lane.max(lane);
-        for &(_, pl, _) in &parent_lanes {
+        for &(_, pl, _, _) in &parent_lanes {
             max_lane = max_lane.max(pl);
         }
 
         // レーン統合が必要かチェック
         // コミットのレーンと親のレーンが異なり、親が既に追跡されている場合
         // → 高いレーンが終了して低いレーンに合流する
-        let lane_merge: Option<usize> = parent_lanes
+        let lane_merge: Option<(usize, usize)> = parent_lanes
             .iter()
-            .find(|(_, pl, was_existing)| *was_existing && *pl != lane)
-            .map(|(_, pl, _)| *pl);
+            .find(|(_, pl, was_existing, _)| *was_existing && *pl != lane)
+            .map(|(_, pl, _, color)| (*pl, *color));
 
         // この行のセルを生成（was_existing の親への接続線は除外 - 接続行で描画する）
-        let non_merging_parents: Vec<(Oid, usize, bool)> = parent_lanes
+        let non_merging_parents: Vec<(Oid, usize, bool, usize)> = parent_lanes
             .iter()
-            .filter(|(_, pl, was_existing)| !(*was_existing && *pl != lane))
+            .filter(|(_, pl, was_existing, _)| !(*was_existing && *pl != lane))
             .copied()
             .collect();
-        let cells = build_row_cells(lane, &non_merging_parents, &lanes, max_lane);
+        let cells = build_row_cells_with_colors(
+            lane,
+            commit_color_index,
+            &non_merging_parents,
+            &lanes,
+            &oid_color_index,
+            max_lane,
+        );
 
         // ブランチ名を取得
         let branch_names = oid_to_branches
@@ -186,6 +216,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
         nodes.push(GraphNode {
             commit: Some(commit.clone()),
             lane,
+            color_index: commit_color_index,
             branch_names,
             is_head,
             cells,
@@ -193,7 +224,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
 
         // 接続行をコミット行の後に追加（レーン統合がある場合）
         // 接続行は終了するレーンの最後のコミットの後に来る
-        if let Some(parent_lane) = lane_merge {
+        if let Some((parent_lane, _)) = lane_merge {
             // 常に低いレーンがメイン（├）、高いレーンがマージ終了（╯）
             let (main_lane, ending_lane) = if parent_lane < lane {
                 (parent_lane, lane)
@@ -201,10 +232,28 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 (lane, parent_lane)
             };
 
-            let connector_cells = build_connector_cells(main_lane, &[ending_lane], &lanes, max_lane);
+            let main_color = lanes
+                .get(main_lane)
+                .and_then(|o| *o)
+                .and_then(|oid| oid_color_index.get(&oid).copied())
+                .unwrap_or(main_lane);
+            let ending_color = oid_color_index
+                .get(&commit.oid)
+                .copied()
+                .unwrap_or(ending_lane);
+
+            let connector_cells = build_connector_cells_with_colors(
+                main_lane,
+                main_color,
+                &[(ending_lane, ending_color)],
+                &lanes,
+                &oid_color_index,
+                max_lane,
+            );
             nodes.push(GraphNode {
                 commit: None,
                 lane: main_lane,
+                color_index: main_color,
                 branch_names: Vec::new(),
                 is_head: false,
                 cells: connector_cells,
@@ -219,6 +268,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                     }
                 }
                 lanes[ending_lane] = None;
+                color_assigner.release_lane(ending_lane);
             }
         }
     }
@@ -226,11 +276,13 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
     GraphLayout { nodes, max_lane }
 }
 
-/// 接続行のセルを構築（ブランチがマージする行）
-fn build_connector_cells(
+/// 接続行のセルを構築（ブランチがマージする行）- 色インデックス版
+fn build_connector_cells_with_colors(
     main_lane: usize,
-    merging_lanes: &[usize],
+    main_color: usize,
+    merging_lanes: &[(usize, usize)], // (lane, color_index)
     active_lanes: &[Option<Oid>],
+    oid_color_index: &HashMap<Oid, usize>,
     max_lane: usize,
 ) -> Vec<CellType> {
     let mut cells = vec![CellType::Empty; (max_lane + 1) * 2];
@@ -238,58 +290,69 @@ fn build_connector_cells(
     // メインレーンにT字分岐を描画
     let main_cell_idx = main_lane * 2;
     if main_cell_idx < cells.len() {
-        cells[main_cell_idx] = CellType::TeeRight(main_lane);
+        cells[main_cell_idx] = CellType::TeeRight(main_color);
     }
 
+    // マージするレーン番号のリスト
+    let merging_lane_nums: Vec<usize> = merging_lanes.iter().map(|(l, _)| *l).collect();
+
     // アクティブなレーンに縦線を描画（メインレーンとマージレーン以外）
-    for (lane_idx, lane) in active_lanes.iter().enumerate() {
-        if lane.is_some() && lane_idx != main_lane && !merging_lanes.contains(&lane_idx) {
-            let cell_idx = lane_idx * 2;
-            if cell_idx < cells.len() {
-                cells[cell_idx] = CellType::Pipe(lane_idx);
+    for (lane_idx, lane_oid) in active_lanes.iter().enumerate() {
+        if let Some(oid) = lane_oid {
+            if lane_idx != main_lane && !merging_lane_nums.contains(&lane_idx) {
+                let cell_idx = lane_idx * 2;
+                if cell_idx < cells.len() {
+                    let color = oid_color_index.get(oid).copied().unwrap_or(lane_idx);
+                    cells[cell_idx] = CellType::Pipe(color);
+                }
             }
         }
     }
 
-    // マージするレーンへの接続線を描画（マージ元のレーン色を使用）
-    for &merge_lane in merging_lanes {
+    // マージするレーンへの接続線を描画
+    for &(merge_lane, merge_color) in merging_lanes {
         // メインレーンからマージレーンへの横線
         for col in (main_lane * 2 + 1)..(merge_lane * 2) {
             if col < cells.len() {
                 let existing = cells[col];
                 if let CellType::Pipe(pl) = existing {
-                    cells[col] = CellType::HorizontalPipe(merge_lane, pl);
+                    cells[col] = CellType::HorizontalPipe(merge_color, pl);
                 } else if existing == CellType::Empty {
-                    cells[col] = CellType::Horizontal(merge_lane);
+                    cells[col] = CellType::Horizontal(merge_color);
                 }
             }
         }
         // マージレーンの終点
         let end_idx = merge_lane * 2;
         if end_idx < cells.len() {
-            cells[end_idx] = CellType::MergeLeft(merge_lane);
+            cells[end_idx] = CellType::MergeLeft(merge_color);
         }
     }
 
     cells
 }
 
-/// 1行分のセルを構築
-/// parent_lanes: (親OID, レーン番号, 既存追跡フラグ)
-fn build_row_cells(
+/// 1行分のセルを構築 - 色インデックス版
+/// parent_lanes: (親OID, レーン番号, 既存追跡フラグ, カラーインデックス)
+fn build_row_cells_with_colors(
     commit_lane: usize,
-    parent_lanes: &[(Oid, usize, bool)],
+    commit_color: usize,
+    parent_lanes: &[(Oid, usize, bool, usize)],
     active_lanes: &[Option<Oid>],
+    oid_color_index: &HashMap<Oid, usize>,
     max_lane: usize,
 ) -> Vec<CellType> {
     let mut cells = vec![CellType::Empty; (max_lane + 1) * 2];
 
     // アクティブなレーンに縦線を描画
-    for (lane_idx, lane) in active_lanes.iter().enumerate() {
-        if lane.is_some() && lane_idx != commit_lane {
-            let cell_idx = lane_idx * 2;
-            if cell_idx < cells.len() {
-                cells[cell_idx] = CellType::Pipe(lane_idx);
+    for (lane_idx, lane_oid) in active_lanes.iter().enumerate() {
+        if let Some(oid) = lane_oid {
+            if lane_idx != commit_lane {
+                let cell_idx = lane_idx * 2;
+                if cell_idx < cells.len() {
+                    let color = oid_color_index.get(oid).copied().unwrap_or(lane_idx);
+                    cells[cell_idx] = CellType::Pipe(color);
+                }
             }
         }
     }
@@ -297,11 +360,11 @@ fn build_row_cells(
     // コミットノードを描画
     let commit_cell_idx = commit_lane * 2;
     if commit_cell_idx < cells.len() {
-        cells[commit_cell_idx] = CellType::Commit(commit_lane);
+        cells[commit_cell_idx] = CellType::Commit(commit_color);
     }
 
     // 親への接続線を描画
-    for &(_parent_oid, parent_lane, was_existing) in parent_lanes.iter() {
+    for &(_parent_oid, parent_lane, was_existing, parent_color) in parent_lanes.iter() {
         if parent_lane == commit_lane {
             // 同じレーン - 縦線のみ（次の行で描画）
             continue;
@@ -309,15 +372,15 @@ fn build_row_cells(
 
         // 異なるレーンへの接続
         if parent_lane > commit_lane {
-            // 右のレーンへの接続（分岐先のレーン色を使用）
+            // 右のレーンへの接続
             // コミット位置から右へ横線
             for col in (commit_lane * 2 + 1)..(parent_lane * 2) {
                 if col < cells.len() {
                     let existing = cells[col];
                     if let CellType::Pipe(pl) = existing {
-                        cells[col] = CellType::HorizontalPipe(parent_lane, pl);
+                        cells[col] = CellType::HorizontalPipe(parent_color, pl);
                     } else if existing == CellType::Empty {
-                        cells[col] = CellType::Horizontal(parent_lane);
+                        cells[col] = CellType::Horizontal(parent_color);
                     }
                 }
             }
@@ -326,22 +389,22 @@ fn build_row_cells(
             if end_idx < cells.len() {
                 if was_existing {
                     // 既存追跡: レーンが終了して合流 ╯（上へ接続）
-                    cells[end_idx] = CellType::MergeLeft(parent_lane);
+                    cells[end_idx] = CellType::MergeLeft(parent_color);
                 } else {
                     // 新規割り当て: レーンが継続 ╮（下へ継続）
-                    cells[end_idx] = CellType::BranchLeft(parent_lane);
+                    cells[end_idx] = CellType::BranchLeft(parent_color);
                 }
             }
         } else {
             // ブランチ終端: 左のレーン（メインライン）へ接続
-            // コミット位置から左へ横線（コミットのレーン色を使用）
+            // コミット位置から左へ横線
             for col in (parent_lane * 2 + 1)..(commit_lane * 2) {
                 if col < cells.len() {
                     let existing = cells[col];
                     if let CellType::Pipe(pl) = existing {
-                        cells[col] = CellType::HorizontalPipe(commit_lane, pl);
+                        cells[col] = CellType::HorizontalPipe(commit_color, pl);
                     } else if existing == CellType::Empty {
-                        cells[col] = CellType::Horizontal(commit_lane);
+                        cells[col] = CellType::Horizontal(commit_color);
                     }
                 }
             }
@@ -349,12 +412,12 @@ fn build_row_cells(
             let start_idx = parent_lane * 2;
             if start_idx < cells.len() {
                 let existing = cells[start_idx];
-                if let CellType::Pipe(_) = existing {
+                if let CellType::Pipe(pl) = existing {
                     // パイプがある場合はT字分岐（├）に変更
-                    cells[start_idx] = CellType::TeeRight(parent_lane);
+                    cells[start_idx] = CellType::TeeRight(pl);
                 } else if existing == CellType::Empty {
                     // 空の場合はマージマーク（╰）
-                    cells[start_idx] = CellType::MergeRight(commit_lane);
+                    cells[start_idx] = CellType::MergeRight(commit_color);
                 }
             }
         }

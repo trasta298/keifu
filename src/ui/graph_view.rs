@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::App,
     git::graph::{CellType, GraphNode},
-    graph::colors::get_lane_color,
+    graph::colors::get_color_by_index,
 };
 
 /// 文字列の表示幅を計算
@@ -49,8 +49,8 @@ impl<'a> GraphViewWidget<'a> {
 /// ブランチ名の表示を最適化
 /// - ローカルブランチと対応するorigin/xxxが一致している場合は「xxx ↔ origin」と表示
 /// - それ以外は従来通り個別に表示
-/// - グラフのレーン色で太文字表示、カッコで囲む
-fn optimize_branch_display(branch_names: &[String], is_head: bool, lane: usize) -> Vec<(String, Style)> {
+/// - グラフのカラーインデックスで太文字表示、カッコで囲む
+fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: usize) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
     if branch_names.is_empty() {
@@ -72,8 +72,8 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, lane: usize) 
         .map(|s| s.as_str())
         .collect();
 
-    // スタイル: グラフのレーン色で太文字（HEADは緑）
-    let base_color = if is_head { Color::Green } else { get_lane_color(lane) };
+    // スタイル: グラフのカラーインデックスで太文字（HEADは緑）
+    let base_color = if is_head { Color::Green } else { get_color_by_index(color_index) };
     let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
 
     // ローカルブランチを処理
@@ -91,11 +91,10 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, lane: usize) 
         }
     }
 
-    // 対応するローカルがないリモートブランチを追加（LightRedで見やすく表示）
-    let remote_style = Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD);
+    // 対応するローカルがないリモートブランチを追加（グラフと同じ色で表示）
     for remote in branch_names.iter().filter(|n| n.starts_with("origin/")) {
         if !processed_remotes.contains(remote) {
-            result.push((format!("[{}]", remote), remote_style));
+            result.push((format!("[{}]", remote), style));
         }
     }
 
@@ -133,23 +132,23 @@ fn render_graph_line<'a>(
     for cell in &node.cells {
         let (ch, color) = match cell {
             CellType::Empty => (' ', Color::Reset),
-            CellType::Pipe(lane) => ('│', get_lane_color(*lane)),
-            CellType::Commit(lane) => {
+            CellType::Pipe(color_idx) => ('│', get_color_by_index(*color_idx)),
+            CellType::Commit(color_idx) => {
                 // HEADは二重丸、それ以外は塗りつぶし丸
                 let ch = if node.is_head { '◉' } else { '●' };
-                (ch, if node.is_head { Color::Green } else { get_lane_color(*lane) })
+                (ch, if node.is_head { Color::Green } else { get_color_by_index(*color_idx) })
             }
-            CellType::BranchRight(lane) => ('╭', get_lane_color(*lane)),
-            CellType::BranchLeft(lane) => ('╮', get_lane_color(*lane)),
-            CellType::MergeRight(lane) => ('╰', get_lane_color(*lane)),
-            CellType::MergeLeft(lane) => ('╯', get_lane_color(*lane)),
-            CellType::Horizontal(lane) => ('─', get_lane_color(*lane)),
-            CellType::HorizontalPipe(_h_lane, p_lane) => {
+            CellType::BranchRight(color_idx) => ('╭', get_color_by_index(*color_idx)),
+            CellType::BranchLeft(color_idx) => ('╮', get_color_by_index(*color_idx)),
+            CellType::MergeRight(color_idx) => ('╰', get_color_by_index(*color_idx)),
+            CellType::MergeLeft(color_idx) => ('╯', get_color_by_index(*color_idx)),
+            CellType::Horizontal(color_idx) => ('─', get_color_by_index(*color_idx)),
+            CellType::HorizontalPipe(_h_color_idx, p_color_idx) => {
                 // 縦線と横線が交差（縦線の色を優先）
-                ('┼', get_lane_color(*p_lane))
+                ('┼', get_color_by_index(*p_color_idx))
             }
-            CellType::TeeRight(lane) => ('├', get_lane_color(*lane)),
-            CellType::TeeLeft(lane) => ('┤', get_lane_color(*lane)),
+            CellType::TeeRight(color_idx) => ('├', get_color_by_index(*color_idx)),
+            CellType::TeeLeft(color_idx) => ('┤', get_color_by_index(*color_idx)),
         };
 
         // 罫線はすべてBOLDで太く表示
@@ -192,7 +191,7 @@ fn render_graph_line<'a>(
     // === 左寄せ部分: ブランチ名 + メッセージ ===
 
     // ブランチ名を最適化（local と origin/local が一致している場合は簡潔に表示）
-    let branch_display = optimize_branch_display(&node.branch_names, node.is_head, node.lane);
+    let branch_display = optimize_branch_display(&node.branch_names, node.is_head, node.color_index);
 
     // === 右寄せ部分: 日時 author hash（固定幅） ===
     let date = commit.timestamp.format("%Y-%m-%d").to_string();  // 10文字

@@ -194,9 +194,10 @@ fn test_cell_structure() {
     println!("  m1 rendered: '{}'", render_cells(m1_cells));
 
     // m1はレーン0でコミット、レーン1への分岐線があるはず
+    // CellType内の値はカラーインデックスなので、セルタイプのみを検証
     assert!(
-        matches!(m1_cells.get(0), Some(CellType::Commit(0))),
-        "m1 cell[0] should be Commit(0), got {:?}",
+        matches!(m1_cells.get(0), Some(CellType::Commit(_))),
+        "m1 cell[0] should be Commit, got {:?}",
         m1_cells.get(0)
     );
 }
