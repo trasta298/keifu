@@ -16,7 +16,7 @@ impl GitRepository {
     /// カレントディレクトリからリポジトリを検出
     pub fn discover() -> Result<Self> {
         let repo = Repository::discover(".")
-            .context("Gitリポジトリが見つかりません。Gitリポジトリ内で実行してください。")?;
+            .context("Git repository not found. Please run inside a Git repository.")?;
         let path = repo
             .workdir()
             .unwrap_or_else(|| repo.path())
@@ -28,7 +28,7 @@ impl GitRepository {
     /// 指定パスからリポジトリを開く
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo = Repository::open(path.as_ref())
-            .context("指定されたパスにGitリポジトリが見つかりません。")?;
+            .context("Git repository not found at specified path.")?;
         let path_str = repo
             .workdir()
             .unwrap_or_else(|| repo.path())

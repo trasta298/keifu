@@ -34,12 +34,12 @@ impl Widget for HelpPopup {
                 Span::styled("Move up", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  h / ←      ", key_style),
-                Span::styled("Focus branch list", desc_style),
+                Span::styled("  ] / Tab    ", key_style),
+                Span::styled("Jump to next branch", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  l / →      ", key_style),
-                Span::styled("Focus graph", desc_style),
+                Span::styled("  [ / S-Tab  ", key_style),
+                Span::styled("Jump to previous branch", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+d     ", key_style),
@@ -56,10 +56,6 @@ impl Widget for HelpPopup {
             Line::from(vec![
                 Span::styled("  G / End    ", key_style),
                 Span::styled("Go to bottom", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Tab        ", key_style),
-                Span::styled("Cycle focus", desc_style),
             ]),
             Line::from(""),
             Line::from(Span::styled("Git Operations", header_style)),

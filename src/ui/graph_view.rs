@@ -10,7 +10,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, PaneFocus},
+    app::App,
     git::graph::{CellType, GraphNode},
     graph::colors::get_lane_color,
 };
@@ -22,7 +22,6 @@ fn display_width(s: &str) -> usize {
 
 pub struct GraphViewWidget<'a> {
     items: Vec<ListItem<'a>>,
-    is_focused: bool,
 }
 
 impl<'a> GraphViewWidget<'a> {
@@ -43,10 +42,7 @@ impl<'a> GraphViewWidget<'a> {
             })
             .collect();
 
-        Self {
-            items,
-            is_focused: app.focus == PaneFocus::Graph,
-        }
+        Self { items }
     }
 }
 
@@ -254,16 +250,10 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let border_style = if self.is_focused {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
         let block = Block::default()
             .title(" Commits ")
             .borders(Borders::ALL)
-            .border_style(border_style);
+            .border_style(Style::default().fg(Color::DarkGray));
 
         let highlight_style = Style::default()
             .bg(Color::DarkGray)

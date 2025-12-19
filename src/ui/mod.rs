@@ -1,6 +1,5 @@
 //! UIコンポーネント
 
-pub mod branch_list;
 pub mod commit_detail;
 pub mod dialog;
 pub mod graph_view;
@@ -15,7 +14,6 @@ use ratatui::{
 use crate::app::App;
 
 use self::{
-    branch_list::BranchListWidget,
     commit_detail::CommitDetailWidget,
     dialog::{ConfirmDialog, InputDialog},
     graph_view::GraphViewWidget,
@@ -36,30 +34,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let main_area = vertical[0];
     let status_area = vertical[1];
 
-    // メインを横分割: ブランチリスト(20%) + 右側(80%)
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
-        .split(main_area);
-
-    let branch_area = horizontal[0];
-    let right_area = horizontal[1];
-
-    // 右側を縦分割: グラフ(70%) + 詳細(30%)
-    let right_vertical = Layout::default()
+    // メインを縦分割: グラフ(70%) + 詳細(30%)
+    let content_vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(right_area);
+        .split(main_area);
 
-    let graph_area = right_vertical[0];
-    let detail_area = right_vertical[1];
+    let graph_area = content_vertical[0];
+    let detail_area = content_vertical[1];
 
     // 各Widgetを描画
-    frame.render_stateful_widget(
-        BranchListWidget::new(app),
-        branch_area,
-        &mut app.branch_list_state,
-    );
     frame.render_stateful_widget(
         GraphViewWidget::new(app, graph_area.width),
         graph_area,

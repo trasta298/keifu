@@ -23,12 +23,6 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
             Some(Action::MoveUp)
         }
-        (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
-            Some(Action::MoveLeft)
-        }
-        (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
-            Some(Action::MoveRight)
-        }
 
         // ページスクロール
         (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::PageDown),
@@ -42,8 +36,13 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::GoToBottom)
         }
 
-        // フォーカス
-        (KeyModifiers::NONE, KeyCode::Tab) => Some(Action::CycleFocus),
+        // ブランチ間ジャンプ
+        (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {
+            Some(Action::NextBranch)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('[')) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+            Some(Action::PrevBranch)
+        }
 
         // Git操作
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::Checkout),

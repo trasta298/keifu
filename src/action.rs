@@ -5,15 +5,12 @@ pub enum Action {
     // ナビゲーション
     MoveUp,
     MoveDown,
-    MoveLeft,
-    MoveRight,
     PageUp,
     PageDown,
     GoToTop,
     GoToBottom,
-
-    // フォーカス
-    CycleFocus,
+    NextBranch,
+    PrevBranch,
 
     // Git操作
     Checkout,

@@ -7,7 +7,7 @@ use git2::{BranchType, Oid, Repository};
 pub fn checkout_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .context(format!("ブランチ '{}' が見つかりません", branch_name))?;
+        .context(format!("Branch '{}' not found", branch_name))?;
 
     let reference = branch.get();
     let commit = reference.peel_to_commit()?;
@@ -23,7 +23,7 @@ pub fn checkout_branch(repo: &Repository, branch_name: &str) -> Result<()> {
 pub fn checkout_commit(repo: &Repository, oid: Oid) -> Result<()> {
     let commit = repo
         .find_commit(oid)
-        .context("コミットが見つかりません")?;
+        .context("Commit not found")?;
     let tree = commit.tree()?;
 
     repo.checkout_tree(tree.as_object(), None)?;
@@ -36,10 +36,10 @@ pub fn checkout_commit(repo: &Repository, oid: Oid) -> Result<()> {
 pub fn create_branch(repo: &Repository, branch_name: &str, from_oid: Oid) -> Result<()> {
     let commit = repo
         .find_commit(from_oid)
-        .context("コミットが見つかりません")?;
+        .context("Commit not found")?;
 
     repo.branch(branch_name, &commit, false)
-        .context(format!("ブランチ '{}' の作成に失敗しました", branch_name))?;
+        .context(format!("Failed to create branch '{}'", branch_name))?;
 
     Ok(())
 }
@@ -48,10 +48,10 @@ pub fn create_branch(repo: &Repository, branch_name: &str, from_oid: Oid) -> Res
 pub fn delete_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let mut branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .context(format!("ブランチ '{}' が見つかりません", branch_name))?;
+        .context(format!("Branch '{}' not found", branch_name))?;
 
     if branch.is_head() {
-        bail!("現在のブランチは削除できません");
+        bail!("Cannot delete current branch");
     }
 
     branch.delete()?;
@@ -62,7 +62,7 @@ pub fn delete_branch(repo: &Repository, branch_name: &str) -> Result<()> {
 pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .context(format!("ブランチ '{}' が見つかりません", branch_name))?;
+        .context(format!("Branch '{}' not found", branch_name))?;
 
     let reference = branch.get();
     let annotated_commit = repo.reference_to_annotated_commit(reference)?;
@@ -92,9 +92,7 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
         repo.merge(&[&annotated_commit], None, None)?;
 
         if repo.index()?.has_conflicts() {
-            bail!(
-                "マージコンフリクトが発生しました。手動で解決してください。"
-            );
+            bail!("Merge conflict occurred. Please resolve manually.");
         }
 
         // マージコミットを作成
@@ -124,7 +122,7 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
 pub fn rebase_branch(repo: &Repository, onto_branch: &str) -> Result<()> {
     let onto = repo
         .find_branch(onto_branch, BranchType::Local)
-        .context(format!("ブランチ '{}' が見つかりません", onto_branch))?;
+        .context(format!("Branch '{}' not found", onto_branch))?;
 
     let onto_annotated = repo.reference_to_annotated_commit(onto.get())?;
 

@@ -44,17 +44,9 @@ pub enum ConfirmAction {
     Rebase(String),
 }
 
-/// フォーカス中のペイン
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaneFocus {
-    BranchList,
-    Graph,
-}
-
 /// アプリケーション状態
 pub struct App {
     pub mode: AppMode,
-    pub focus: PaneFocus,
     pub repo: GitRepository,
     pub repo_path: String,
     pub head_name: Option<String>,
@@ -65,7 +57,6 @@ pub struct App {
     pub graph_layout: GraphLayout,
 
     // UI状態
-    pub branch_list_state: ListState,
     pub graph_list_state: ListState,
 
     // フラグ
@@ -84,24 +75,17 @@ impl App {
         let branches = repo.get_branches()?;
         let graph_layout = build_graph(&commits, &branches);
 
-        let mut branch_list_state = ListState::default();
         let mut graph_list_state = ListState::default();
-
-        // HEADのブランチを選択
-        let head_idx = branches.iter().position(|b| b.is_head).unwrap_or(0);
-        branch_list_state.select(Some(head_idx));
         graph_list_state.select(Some(0));
 
         Ok(Self {
             mode: AppMode::Normal,
-            focus: PaneFocus::Graph,
             repo,
             repo_path,
             head_name,
             commits,
             branches,
             graph_layout,
-            branch_list_state,
             graph_list_state,
             should_quit: false,
             message: None,
@@ -116,13 +100,6 @@ impl App {
         self.head_name = self.repo.head_name();
 
         // 選択位置を調整
-        let max_branch = self.branches.len().saturating_sub(1);
-        if let Some(selected) = self.branch_list_state.selected() {
-            if selected > max_branch {
-                self.branch_list_state.select(Some(max_branch));
-            }
-        }
-
         let max_commit = self.graph_layout.nodes.len().saturating_sub(1);
         if let Some(selected) = self.graph_list_state.selected() {
             if selected > max_commit {
@@ -155,12 +132,6 @@ impl App {
             Action::MoveDown => {
                 self.move_selection(1);
             }
-            Action::MoveLeft => {
-                self.focus = PaneFocus::BranchList;
-            }
-            Action::MoveRight => {
-                self.focus = PaneFocus::Graph;
-            }
             Action::PageUp => {
                 self.move_selection(-10);
             }
@@ -173,11 +144,11 @@ impl App {
             Action::GoToBottom => {
                 self.select_last();
             }
-            Action::CycleFocus => {
-                self.focus = match self.focus {
-                    PaneFocus::BranchList => PaneFocus::Graph,
-                    PaneFocus::Graph => PaneFocus::BranchList,
-                };
+            Action::NextBranch => {
+                self.jump_to_next_branch();
+            }
+            Action::PrevBranch => {
+                self.jump_to_prev_branch();
             }
             Action::ToggleHelp => {
                 self.mode = AppMode::Help;
@@ -318,50 +289,59 @@ impl App {
     }
 
     fn move_selection(&mut self, delta: i32) {
-        match self.focus {
-            PaneFocus::BranchList => {
-                let max = self.branches.len().saturating_sub(1);
-                let current = self.branch_list_state.selected().unwrap_or(0);
-                let new = (current as i32 + delta).clamp(0, max as i32) as usize;
-                self.branch_list_state.select(Some(new));
-            }
-            PaneFocus::Graph => {
-                let max = self.graph_layout.nodes.len().saturating_sub(1);
-                let current = self.graph_list_state.selected().unwrap_or(0);
-                let new = (current as i32 + delta).clamp(0, max as i32) as usize;
-                self.graph_list_state.select(Some(new));
-            }
-        }
+        let max = self.graph_layout.nodes.len().saturating_sub(1);
+        let current = self.graph_list_state.selected().unwrap_or(0);
+        let new = (current as i32 + delta).clamp(0, max as i32) as usize;
+        self.graph_list_state.select(Some(new));
     }
 
     fn select_first(&mut self) {
-        match self.focus {
-            PaneFocus::BranchList => {
-                self.branch_list_state.select(Some(0));
-            }
-            PaneFocus::Graph => {
-                self.graph_list_state.select(Some(0));
-            }
-        }
+        self.graph_list_state.select(Some(0));
     }
 
     fn select_last(&mut self) {
-        match self.focus {
-            PaneFocus::BranchList => {
-                let max = self.branches.len().saturating_sub(1);
-                self.branch_list_state.select(Some(max));
-            }
-            PaneFocus::Graph => {
-                let max = self.graph_layout.nodes.len().saturating_sub(1);
-                self.graph_list_state.select(Some(max));
-            }
+        let max = self.graph_layout.nodes.len().saturating_sub(1);
+        self.graph_list_state.select(Some(max));
+    }
+
+    /// 次のブランチがあるコミットへジャンプ
+    fn jump_to_next_branch(&mut self) {
+        let current = self.graph_list_state.selected().unwrap_or(0);
+        let nodes = &self.graph_layout.nodes;
+
+        // 現在位置より後で、ブランチ名を持つノードを探す
+        if let Some((i, _)) = nodes
+            .iter()
+            .enumerate()
+            .skip(current + 1)
+            .find(|(_, node)| !node.branch_names.is_empty())
+        {
+            self.graph_list_state.select(Some(i));
         }
     }
 
+    /// 前のブランチがあるコミットへジャンプ
+    fn jump_to_prev_branch(&mut self) {
+        let current = self.graph_list_state.selected().unwrap_or(0);
+        let nodes = &self.graph_layout.nodes;
+
+        // 現在位置より前で、ブランチ名を持つノードを探す（逆順）
+        if let Some((i, _)) = nodes
+            .iter()
+            .enumerate()
+            .take(current)
+            .rev()
+            .find(|(_, node)| !node.branch_names.is_empty())
+        {
+            self.graph_list_state.select(Some(i));
+        }
+    }
+
+    /// 現在選択中のコミットにあるブランチを取得
     fn selected_branch(&self) -> Option<&BranchInfo> {
-        self.branch_list_state
-            .selected()
-            .and_then(|i| self.branches.get(i))
+        let node = self.selected_commit_node()?;
+        let branch_name = node.branch_names.first()?;
+        self.branches.iter().find(|b| &b.name == branch_name)
     }
 
     fn selected_commit_node(&self) -> Option<&crate::git::graph::GraphNode> {
@@ -371,22 +351,16 @@ impl App {
     }
 
     fn do_checkout(&mut self) -> Result<()> {
-        match self.focus {
-            PaneFocus::BranchList => {
-                if let Some(branch) = self.selected_branch() {
-                    if !branch.is_remote {
-                        checkout_branch(&self.repo.repo, &branch.name)?;
-                        self.refresh()?;
-                    }
+        if let Some(node) = self.selected_commit_node() {
+            // ブランチがあればブランチをチェックアウト、なければコミットをチェックアウト
+            if let Some(branch_name) = node.branch_names.first() {
+                if !branch_name.starts_with("origin/") {
+                    checkout_branch(&self.repo.repo, branch_name)?;
+                    self.refresh()?;
                 }
-            }
-            PaneFocus::Graph => {
-                if let Some(node) = self.selected_commit_node() {
-                    if let Some(commit) = &node.commit {
-                        checkout_commit(&self.repo.repo, commit.oid)?;
-                        self.refresh()?;
-                    }
-                }
+            } else if let Some(commit) = &node.commit {
+                checkout_commit(&self.repo.repo, commit.oid)?;
+                self.refresh()?;
             }
         }
         Ok(())

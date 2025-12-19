@@ -23,7 +23,7 @@ impl<'a> CommitDetailWidget<'a> {
                 // 接続行の場合はスキップ
                 let Some(commit) = &node.commit else {
                     lines.push(Line::from(Span::styled(
-                        "（接続行）",
+                        "(connector line)",
                         Style::default().fg(Color::DarkGray),
                     )));
                     return Self { lines };
@@ -75,7 +75,7 @@ impl<'a> CommitDetailWidget<'a> {
             }
         } else {
             lines.push(Line::from(Span::styled(
-                "コミットを選択してください",
+                "Select a commit",
                 Style::default().fg(Color::DarkGray),
             )));
         }
