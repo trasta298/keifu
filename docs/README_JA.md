@@ -1,8 +1,10 @@
 # 🧬 keifu
 
-[English README](README.md)
+[English README](../README.md)
 
 keifu (系譜, /keːɸɯ/) は、ターミナル上で Git のコミットグラフを可視化する TUI ツールです。カラー付きのグラフ、コミット詳細、変更ファイルの要約を表示し、基本的なブランチ操作も行えます。
+
+![スクリーンショット](win_terminal.png)
 
 ## 特長
 

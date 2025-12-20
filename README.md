@@ -1,8 +1,10 @@
 # 🧬 keifu
 
-[日本語版はこちら](README_JA.md)
+[日本語版はこちら](docs/README_JA.md)
 
 keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit graphs. It shows a colored commit graph, commit details, and a summary of changed files, and lets you perform basic branch operations.
+
+![Screenshot](docs/win_terminal.png)
 
 ## Features
 
