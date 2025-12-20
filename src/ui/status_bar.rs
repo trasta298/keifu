@@ -76,10 +76,6 @@ impl<'a> Widget for StatusBar<'a> {
                 spans.push(Span::styled("checkout ", desc_style));
                 spans.push(Span::styled(" b ", key_style));
                 spans.push(Span::styled("branch ", desc_style));
-                spans.push(Span::styled(" m ", key_style));
-                spans.push(Span::styled("merge ", desc_style));
-                spans.push(Span::styled(" r ", key_style));
-                spans.push(Span::styled("rebase ", desc_style));
                 spans.push(Span::styled(" ? ", key_style));
                 spans.push(Span::styled("help ", desc_style));
                 spans.push(Span::styled(" q ", key_style));

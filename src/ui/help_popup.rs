@@ -79,14 +79,15 @@ impl Widget for HelpPopup {
                 Span::styled("  d          ", key_style),
                 Span::styled("Delete branch", desc_style),
             ]),
-            Line::from(vec![
-                Span::styled("  m          ", key_style),
-                Span::styled("Merge branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  r          ", key_style),
-                Span::styled("Rebase onto branch", desc_style),
-            ]),
+            // TODO: merge and rebase will be implemented in the future
+            // Line::from(vec![
+            //     Span::styled("  m          ", key_style),
+            //     Span::styled("Merge branch", desc_style),
+            // ]),
+            // Line::from(vec![
+            //     Span::styled("  r          ", key_style),
+            //     Span::styled("Rebase onto branch", desc_style),
+            // ]),
             Line::from(""),
             Line::from(Span::styled("Other", header_style)),
             Line::from(vec![
