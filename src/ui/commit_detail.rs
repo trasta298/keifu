@@ -139,20 +139,26 @@ impl<'a> CommitDetailWidget<'a> {
 
             let path_str = file.path.to_string_lossy().to_string();
 
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!(" {} ", indicator), Style::default().fg(color)),
                 Span::raw(path_str),
-                Span::raw(" "),
-                Span::styled(
+            ];
+
+            // Only show diff stats if there are actual changes (skip for binary files)
+            if file.insertions > 0 || file.deletions > 0 {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
                     format!("+{}", file.insertions),
                     Style::default().fg(Color::Green),
-                ),
-                Span::raw(" "),
-                Span::styled(
+                ));
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
                     format!("-{}", file.deletions),
                     Style::default().fg(Color::Red),
-                ),
-            ]));
+                ));
+            }
+
+            lines.push(Line::from(spans));
         }
 
         // Truncation message
