@@ -11,6 +11,7 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
         AppMode::Help => map_help_mode(key),
         AppMode::Input { .. } => map_input_mode(key),
         AppMode::Confirm { .. } => map_confirm_mode(key),
+        AppMode::Error { .. } => map_error_mode(key),
     }
 }
 
@@ -84,6 +85,13 @@ fn map_confirm_mode(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('y') | KeyCode::Enter => Some(Action::Confirm),
         KeyCode::Char('n') | KeyCode::Esc => Some(Action::Cancel),
+        _ => None,
+    }
+}
+
+fn map_error_mode(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Some(Action::Cancel),
         _ => None,
     }
 }

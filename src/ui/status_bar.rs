@@ -14,14 +14,20 @@ pub struct StatusBar<'a> {
     mode: &'a AppMode,
     repo_path: &'a str,
     head_name: Option<&'a str>,
+    error_message: Option<&'a str>,
 }
 
 impl<'a> StatusBar<'a> {
     pub fn new(app: &'a App) -> Self {
+        let error_message = match &app.mode {
+            AppMode::Error { message } => Some(message.as_str()),
+            _ => None,
+        };
         Self {
             mode: &app.mode,
             repo_path: &app.repo_path,
             head_name: app.head_name.as_deref(),
+            error_message,
         }
     }
 }
@@ -95,6 +101,19 @@ impl<'a> Widget for StatusBar<'a> {
                 spans.push(Span::styled(" n ", key_style));
                 spans.push(Span::styled("no", desc_style));
             }
+            AppMode::Error { .. } => {
+                // エラーモードでは、エラーメッセージを表示してキーバインドを非表示
+                let error_style = Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD);
+                if let Some(msg) = self.error_message {
+                    spans.push(Span::styled(format!(" {} ", msg), error_style));
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(" Esc/Enter ", key_style));
+                    spans.push(Span::styled("close", desc_style));
+                }
+            }
         }
 
         let line = Line::from(spans);
@@ -106,6 +125,7 @@ impl<'a> Widget for StatusBar<'a> {
             AppMode::Help => " HELP ",
             AppMode::Input { .. } => " INPUT ",
             AppMode::Confirm { .. } => " CONFIRM ",
+            AppMode::Error { .. } => " ERROR ",
         };
         let mode_len = mode_text.len() as u16;
         if area.width > mode_len {

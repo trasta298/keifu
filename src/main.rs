@@ -46,8 +46,8 @@ fn main() -> Result<()> {
             if let Some(key) = get_key_event(&event) {
                 if let Some(action) = map_key_to_action(key, &app.mode) {
                     if let Err(e) = app.handle_action(action) {
-                        // エラーをメッセージとして表示（TODO: より良いエラー表示）
-                        eprintln!("Error: {}", e);
+                        // エラーをUIに表示
+                        app.show_error(format!("{}", e));
                     }
                 }
             }

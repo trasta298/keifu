@@ -13,7 +13,7 @@ use crate::{
     git::{
         build_graph,
         graph::GraphLayout,
-        operations::{checkout_branch, checkout_commit, create_branch, delete_branch, merge_branch, rebase_branch},
+        operations::{checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch, merge_branch, rebase_branch},
         BranchInfo, CommitDiffInfo, CommitInfo, GitRepository,
     },
 };
@@ -31,6 +31,9 @@ pub enum AppMode {
     Confirm {
         message: String,
         action: ConfirmAction,
+    },
+    Error {
+        message: String,
     },
 }
 
@@ -203,8 +206,14 @@ impl App {
             AppMode::Help => self.handle_help_action(action),
             AppMode::Input { .. } => self.handle_input_action(action)?,
             AppMode::Confirm { .. } => self.handle_confirm_action(action)?,
+            AppMode::Error { .. } => self.handle_error_action(action),
         }
         Ok(())
+    }
+
+    /// エラーを表示
+    pub fn show_error(&mut self, message: String) {
+        self.mode = AppMode::Error { message };
     }
 
     fn handle_normal_action(&mut self, action: Action) -> Result<()> {
@@ -289,6 +298,13 @@ impl App {
 
     fn handle_help_action(&mut self, action: Action) {
         if matches!(action, Action::ToggleHelp | Action::Quit | Action::Cancel) {
+            self.mode = AppMode::Normal;
+        }
+    }
+
+    fn handle_error_action(&mut self, action: Action) {
+        // 任意のキーでエラーを閉じる
+        if matches!(action, Action::Quit | Action::Cancel | Action::Confirm) {
             self.mode = AppMode::Normal;
         }
     }
@@ -440,10 +456,13 @@ impl App {
         if let Some(node) = self.selected_commit_node() {
             // ブランチがあればブランチをチェックアウト、なければコミットをチェックアウト
             if let Some(branch_name) = node.branch_names.first() {
-                if !branch_name.starts_with("origin/") {
+                if branch_name.starts_with("origin/") {
+                    // リモートブランチの場合、ローカルブランチを作成してチェックアウト
+                    checkout_remote_branch(&self.repo.repo, branch_name)?;
+                } else {
                     checkout_branch(&self.repo.repo, branch_name)?;
-                    self.refresh()?;
                 }
+                self.refresh()?;
             } else if let Some(commit) = &node.commit {
                 checkout_commit(&self.repo.repo, commit.oid)?;
                 self.refresh()?;
