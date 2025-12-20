@@ -1,10 +1,10 @@
 [package]
-name = "git-graph-tui"
+name = "keifu"
 version = "0.1.0"
 edition = "2021"
-description = "A TUI tool to visualize Git commit graphs like VSCode Git Graph"
+description = "A TUI tool to visualize Git commit graphs with branch genealogy"
 license = "MIT"
-authors = ["Your Name"]
+authors = ["trasta298"]
 
 [dependencies]
 # TUI

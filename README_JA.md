@@ -1,8 +1,8 @@
-# git-graph-tui
+# keifu
 
 [English README](README.md)
 
-git-graph-tui は、ターミナル上で Git のコミットグラフを可視化する TUI ツールです。カラー付きのグラフ、コミット詳細、変更ファイルの要約を表示し、基本的なブランチ操作も行えます。
+keifu (系譜, /keːɸɯ/) は、ターミナル上で Git のコミットグラフを可視化する TUI ツールです。カラー付きのグラフ、コミット詳細、変更ファイルの要約を表示し、基本的なブランチ操作も行えます。
 
 ## 特長
 
@@ -27,7 +27,7 @@ cargo install --path .
 
 ```bash
 cargo build --release
-./target/release/git-graph-tui
+./target/release/keifu
 ```
 
 ## 使い方
@@ -35,7 +35,7 @@ cargo build --release
 Git リポジトリ内で実行します:
 
 ```bash
-git-graph-tui
+keifu
 ```
 
 ## キーバインド

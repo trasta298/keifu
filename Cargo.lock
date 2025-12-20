@@ -337,20 +337,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "git-graph-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "crossterm",
- "git2",
- "ratatui",
- "thiserror",
- "unicode-width 0.2.0",
-]
-
-[[package]]
 name = "git2"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -575,6 +561,20 @@ checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "keifu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "crossterm",
+ "git2",
+ "ratatui",
+ "thiserror",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

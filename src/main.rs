@@ -1,8 +1,8 @@
-//! git-graph-tui: a TUI tool that shows Git graphs in the CLI
+//! keifu: a TUI tool that shows Git commit graphs
 
 use anyhow::Result;
 
-use git_graph_tui::{
+use keifu::{
     app::App,
     event::{get_key_event, poll_event},
     keybindings::map_key_to_action,
