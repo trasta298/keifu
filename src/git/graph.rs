@@ -122,6 +122,9 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
     let mut lane_color_index: HashMap<usize, usize> = HashMap::new();
 
     for commit in commits {
+        // 新しい行の処理を開始
+        color_assigner.advance_row();
+
         // このコミットのOIDを追跡中のレーンを探す
         let commit_lane_opt = lanes
             .iter()
@@ -236,6 +239,13 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
 
         // フォーク兄弟かどうか（親がフォークポイントで、既に別レーンで追跡中）
         let mut is_fork_sibling = false;
+        // フォーク兄弟の場合の色（commit_color_indexを上書きするため）
+        let mut fork_sibling_color: Option<usize> = None;
+
+        // 複数の親がある場合（マージコミット）はフォーク処理を開始
+        if valid_parents.len() >= 2 {
+            color_assigner.begin_fork();
+        }
 
         for (parent_idx, parent_oid) in valid_parents.iter().enumerate() {
             // 親がすでにレーンにあるか確認
@@ -249,8 +259,16 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                     // このコミットのレーンでも親を追跡（複数レーンで同じOIDを追跡）
                     lanes[lane] = Some(*parent_oid);
                     is_fork_sibling = true;
-                    let color = oid_color_index.get(parent_oid).copied().unwrap_or(pl);
-                    (lane, false, color) // was_existing=false として扱う
+                    // メインレーンの場合は色を変更しない、それ以外はcommit_color_indexを使用
+                    let color = if color_assigner.is_main_lane(lane) {
+                        color_assigner.get_main_color()
+                    } else {
+                        // 現在のコミットの色を使用（新しい色は割り当てない）
+                        commit_color_index
+                    };
+                    fork_sibling_color = Some(color);
+                    lane_color_index.insert(lane, color);
+                    (lane, false, color)
                 } else {
                     // 既存レーン - 既存の色を使用
                     let color = oid_color_index.get(parent_oid).copied().unwrap_or(pl);
@@ -262,7 +280,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 oid_color_index.insert(*parent_oid, commit_color_index);
                 (lane, false, commit_color_index)
             } else {
-                // 2番目以降の親は別レーンを使用 - 新しい色を割り当て
+                // 2番目以降の親は別レーンを使用 - フォーク兄弟として色を割り当て
                 let empty = lanes.iter().position(|l| l.is_none());
                 let new_lane = if let Some(l) = empty {
                     l
@@ -271,8 +289,9 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                     lanes.len() - 1
                 };
                 lanes[new_lane] = Some(*parent_oid);
-                let new_color = color_assigner.assign_color(new_lane);
+                let new_color = color_assigner.assign_fork_sibling_color(new_lane);
                 oid_color_index.insert(*parent_oid, new_color);
+                lane_color_index.insert(new_lane, new_color);
                 (new_lane, false, new_color)
             };
 
@@ -281,6 +300,9 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
 
         // フォーク兄弟の場合はlane_mergeをスキップ
         let _ = is_fork_sibling; // 後で使用
+
+        // フォーク兄弟の色が設定されていればそれを使用
+        let final_color_index = fork_sibling_color.unwrap_or(commit_color_index);
 
         // max_laneを更新
         max_lane = max_lane.max(lane);
@@ -304,7 +326,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             .collect();
         let cells = build_row_cells_with_colors(
             lane,
-            commit_color_index,
+            final_color_index,
             &non_merging_parents,
             &lanes,
             &oid_color_index,
@@ -324,7 +346,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
         nodes.push(GraphNode {
             commit: Some(commit.clone()),
             lane,
-            color_index: commit_color_index,
+            color_index: final_color_index,
             branch_names,
             is_head,
             cells,

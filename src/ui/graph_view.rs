@@ -72,8 +72,15 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: 
         .map(|s| s.as_str())
         .collect();
 
-    // スタイル: グラフのカラーインデックスで太文字（HEADは緑）
-    let base_color = if is_head { Color::Green } else { get_color_by_index(color_index) };
+    // スタイル: グラフのカラーインデックスで太文字
+    // メインブランチ（青）は常に青、それ以外のHEADは緑
+    let base_color = if color_index == crate::graph::colors::MAIN_BRANCH_COLOR {
+        get_color_by_index(color_index) // メインブランチは常に青
+    } else if is_head {
+        Color::Green
+    } else {
+        get_color_by_index(color_index)
+    };
     let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
 
     // ローカルブランチを処理
@@ -136,7 +143,15 @@ fn render_graph_line<'a>(
             CellType::Commit(color_idx) => {
                 // HEADは二重丸、それ以外は塗りつぶし丸
                 let ch = if node.is_head { '◉' } else { '●' };
-                (ch, if node.is_head { Color::Green } else { get_color_by_index(*color_idx) })
+                // メインブランチ（青）は常に青、それ以外のHEADは緑
+                let color = if *color_idx == crate::graph::colors::MAIN_BRANCH_COLOR {
+                    get_color_by_index(*color_idx)
+                } else if node.is_head {
+                    Color::Green
+                } else {
+                    get_color_by_index(*color_idx)
+                };
+                (ch, color)
             }
             CellType::BranchRight(color_idx) => ('╭', get_color_by_index(*color_idx)),
             CellType::BranchLeft(color_idx) => ('╮', get_color_by_index(*color_idx)),
