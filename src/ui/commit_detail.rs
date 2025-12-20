@@ -22,6 +22,36 @@ impl<'a> CommitDetailWidget<'a> {
 
         if let Some(selected) = app.graph_list_state.selected() {
             if let Some(node) = app.graph_layout.nodes.get(selected) {
+                // Handle uncommitted changes node
+                if node.is_uncommitted {
+                    commit_lines.push(Line::from(Span::styled(
+                        "Uncommitted Changes",
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    commit_lines.push(Line::from(""));
+                    commit_lines.push(Line::from(Span::styled(
+                        format!("{} files with changes", node.uncommitted_count),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+
+                    // Build the file list (from cache)
+                    let file_lines = if app.is_diff_loading() {
+                        vec![Line::from(Span::styled(
+                            "Loading...",
+                            Style::default().fg(Color::DarkGray),
+                        ))]
+                    } else {
+                        Self::build_file_list_lines_from(app.cached_diff())
+                    };
+
+                    return Self {
+                        commit_lines,
+                        file_lines,
+                    };
+                }
+
                 // Skip connector rows
                 let Some(commit) = &node.commit else {
                     commit_lines.push(Line::from(Span::styled(

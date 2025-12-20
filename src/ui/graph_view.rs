@@ -220,6 +220,14 @@ fn render_graph_line<'a>(
     spans.push(Span::raw(" "));
     left_width += 1;
 
+    // Handle uncommitted changes row
+    if node.is_uncommitted {
+        let text = format!("uncommitted changes ({})", node.uncommitted_count);
+        let style = Style::default().fg(Color::White);
+        spans.push(Span::styled(text, style));
+        return Line::from(spans);
+    }
+
     // Early return for connector-only rows
     let commit = match &node.commit {
         Some(c) => c,

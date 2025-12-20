@@ -5,6 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use git2::Repository;
 
+use git2::Oid;
+
 use super::{BranchInfo, CommitInfo};
 
 pub struct GitRepository {
@@ -75,4 +77,62 @@ impl GitRepository {
             .ok()
             .and_then(|h| h.shorthand().map(|s| s.to_string()))
     }
+
+    /// Get the current HEAD commit OID
+    pub fn head_oid(&self) -> Option<Oid> {
+        self.repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id())
+    }
+
+    /// Get working tree status (staged + unstaged changes, excluding untracked files)
+    /// Returns None if there are no changes
+    pub fn get_working_tree_status(&self) -> Result<Option<WorkingTreeStatus>> {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(false).include_ignored(false);
+
+        let statuses = self.repo.statuses(Some(&mut opts))?;
+
+        let mut file_count = 0;
+
+        for entry in statuses.iter() {
+            let status = entry.status();
+
+            // Staged changes (INDEX_*)
+            if status.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            ) {
+                file_count += 1;
+                continue; // Count each file only once
+            }
+
+            // Unstaged changes (WT_*)
+            if status.intersects(
+                git2::Status::WT_MODIFIED
+                    | git2::Status::WT_DELETED
+                    | git2::Status::WT_RENAMED
+                    | git2::Status::WT_TYPECHANGE,
+            ) {
+                file_count += 1;
+            }
+        }
+
+        if file_count > 0 {
+            Ok(Some(WorkingTreeStatus { file_count }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// Working tree status
+#[derive(Debug, Clone)]
+pub struct WorkingTreeStatus {
+    pub file_count: usize,
 }

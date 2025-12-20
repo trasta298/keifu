@@ -88,6 +88,11 @@ pub struct App {
     diff_loading_oid: Option<Oid>,
     diff_receiver: Option<Receiver<DiffResult>>,
 
+    // Uncommitted diff cache
+    uncommitted_diff_cache: Option<CommitDiffInfo>,
+    uncommitted_diff_loading: bool,
+    uncommitted_diff_receiver: Option<Receiver<Option<CommitDiffInfo>>>,
+
     // Flags
     pub should_quit: bool,
     pub message: Option<String>,
@@ -102,7 +107,13 @@ impl App {
 
         let commits = repo.get_commits(500)?;
         let branches = repo.get_branches()?;
-        let graph_layout = build_graph(&commits, &branches);
+        let uncommitted_count = repo
+            .get_working_tree_status()
+            .ok()
+            .flatten()
+            .map(|s| s.file_count);
+        let head_commit_oid = repo.head_oid();
+        let graph_layout = build_graph(&commits, &branches, uncommitted_count, head_commit_oid);
 
         let mut graph_list_state = ListState::default();
         graph_list_state.select(Some(0));
@@ -130,6 +141,9 @@ impl App {
             diff_cache_oid: None,
             diff_loading_oid: None,
             diff_receiver: None,
+            uncommitted_diff_cache: None,
+            uncommitted_diff_loading: false,
+            uncommitted_diff_receiver: None,
             should_quit: false,
             message: None,
         })
@@ -145,7 +159,15 @@ impl App {
 
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
-        self.graph_layout = build_graph(&self.commits, &self.branches);
+        let uncommitted_count = self
+            .repo
+            .get_working_tree_status()
+            .ok()
+            .flatten()
+            .map(|s| s.file_count);
+        let head_commit_oid = self.repo.head_oid();
+        self.graph_layout =
+            build_graph(&self.commits, &self.branches, uncommitted_count, head_commit_oid);
         self.head_name = self.repo.head_name();
 
         // Rebuild branch positions
@@ -170,6 +192,9 @@ impl App {
         self.diff_cache_oid = None;
         self.diff_loading_oid = None;
         self.diff_receiver = None;
+        self.uncommitted_diff_cache = None;
+        self.uncommitted_diff_loading = false;
+        self.uncommitted_diff_receiver = None;
 
         // Clamp the selection
         let max_commit = self.graph_layout.nodes.len().saturating_sub(1);
@@ -184,7 +209,7 @@ impl App {
 
     /// Update diff info for the selected commit (async)
     pub fn update_diff_cache(&mut self) {
-        // Pull in completed results, if any
+        // Pull in completed results for commit diff
         if let Some(ref receiver) = self.diff_receiver {
             if let Ok(result) = receiver.try_recv() {
                 self.diff_cache = result.diff;
@@ -194,16 +219,54 @@ impl App {
             }
         }
 
-        let selected_oid = self.graph_list_state.selected().and_then(|idx| {
-            self.graph_layout
-                .nodes
-                .get(idx)
-                .and_then(|node| node.commit.as_ref().map(|c| c.oid))
+        // Pull in completed results for uncommitted diff
+        if let Some(ref receiver) = self.uncommitted_diff_receiver {
+            if let Ok(diff) = receiver.try_recv() {
+                self.uncommitted_diff_cache = diff;
+                self.uncommitted_diff_loading = false;
+                self.uncommitted_diff_receiver = None;
+            }
+        }
+
+        // Check if uncommitted node is selected
+        let selected_node = self.graph_list_state.selected().and_then(|idx| {
+            self.graph_layout.nodes.get(idx)
         });
 
-        let Some(oid) = selected_oid else {
+        let Some(node) = selected_node else {
             return;
         };
+
+        // Handle uncommitted node
+        if node.is_uncommitted {
+            // Do nothing if cache exists or already loading
+            if self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_loading {
+                return;
+            }
+
+            // Compute uncommitted diff in the background
+            let (tx, rx) = mpsc::channel();
+            let repo_path = self.repo_path.clone();
+
+            self.uncommitted_diff_loading = true;
+            self.uncommitted_diff_receiver = Some(rx);
+
+            thread::spawn(move || {
+                let diff = git2::Repository::open(&repo_path)
+                    .ok()
+                    .and_then(|repo| CommitDiffInfo::from_working_tree(&repo).ok());
+
+                let _ = tx.send(diff);
+            });
+            return;
+        }
+
+        // Handle regular commit node
+        let Some(commit) = &node.commit else {
+            return;
+        };
+
+        let oid = commit.oid;
 
         // Do nothing if the cache is valid
         if self.diff_cache_oid == Some(oid) {
@@ -231,13 +294,33 @@ impl App {
         });
     }
 
-    /// Get cached diff info
+    /// Get cached diff info for the currently selected node
     pub fn cached_diff(&self) -> Option<&CommitDiffInfo> {
+        let selected_node = self.graph_list_state.selected().and_then(|idx| {
+            self.graph_layout.nodes.get(idx)
+        });
+
+        if let Some(node) = selected_node {
+            if node.is_uncommitted {
+                return self.uncommitted_diff_cache.as_ref();
+            }
+        }
+
         self.diff_cache.as_ref()
     }
 
-    /// Whether diff is currently loading
+    /// Whether diff is currently loading for the selected node
     pub fn is_diff_loading(&self) -> bool {
+        let selected_node = self.graph_list_state.selected().and_then(|idx| {
+            self.graph_layout.nodes.get(idx)
+        });
+
+        if let Some(node) = selected_node {
+            if node.is_uncommitted {
+                return self.uncommitted_diff_loading;
+            }
+        }
+
         self.diff_loading_oid.is_some()
     }
 

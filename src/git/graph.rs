@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use git2::Oid;
 
 use super::{BranchInfo, CommitInfo};
-use crate::graph::colors::ColorAssigner;
+use crate::graph::colors::{ColorAssigner, UNCOMMITTED_COLOR_INDEX};
 
 /// Graph node
 #[derive(Debug, Clone)]
 pub struct GraphNode {
-    /// Commit info (None means connector row only)
+    /// Commit info (None means connector row only or uncommitted changes row)
     pub commit: Option<CommitInfo>,
     /// Lane position for this commit
     pub lane: usize,
@@ -20,6 +20,10 @@ pub struct GraphNode {
     pub branch_names: Vec<String>,
     /// Whether HEAD points to this commit
     pub is_head: bool,
+    /// Whether this is an uncommitted changes node
+    pub is_uncommitted: bool,
+    /// Number of uncommitted files (valid only when is_uncommitted is true)
+    pub uncommitted_count: usize,
     /// Render info for this row
     pub cells: Vec<CellType>,
 }
@@ -61,7 +65,14 @@ pub struct GraphLayout {
 }
 
 /// Build a graph from commit list
-pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayout {
+/// uncommitted_count: Number of uncommitted files (None if no uncommitted changes)
+/// head_commit_oid: The OID of the commit that HEAD points to (for uncommitted changes)
+pub fn build_graph(
+    commits: &[CommitInfo],
+    branches: &[BranchInfo],
+    uncommitted_count: Option<usize>,
+    head_commit_oid: Option<Oid>,
+) -> GraphLayout {
     if commits.is_empty() {
         return GraphLayout {
             nodes: Vec::new(),
@@ -196,6 +207,8 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 color_index: main_color,
                 branch_names: Vec::new(),
                 is_head: false,
+                is_uncommitted: false,
+                uncommitted_count: 0,
                 cells: fork_connector_cells,
             });
 
@@ -351,6 +364,8 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             color_index: final_color_index,
             branch_names,
             is_head,
+            is_uncommitted: false,
+            uncommitted_count: 0,
             cells,
         });
 
@@ -389,6 +404,8 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 color_index: main_color,
                 branch_names: Vec::new(),
                 is_head: false,
+                is_uncommitted: false,
+                uncommitted_count: 0,
                 cells: connector_cells,
             });
 
@@ -404,6 +421,130 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 color_assigner.release_lane(ending_lane);
                 lane_color_index.remove(&ending_lane);
             }
+        }
+    }
+
+    // Insert uncommitted changes node at the beginning if there are uncommitted changes
+    if let Some(count) = uncommitted_count {
+        // Find the node index that HEAD points to
+        let head_node_idx = head_commit_oid.and_then(|oid| {
+            nodes
+                .iter()
+                .position(|n| n.commit.as_ref().map(|c| c.oid) == Some(oid))
+        });
+
+        if let Some(head_idx) = head_node_idx {
+            let head_lane = nodes[head_idx].lane;
+
+            // Find an available lane for the uncommitted line
+            // Check if head_lane is available for all nodes before HEAD
+            let head_lane_available = (0..head_idx).all(|i| {
+                let cell_idx = head_lane * 2;
+                nodes[i]
+                    .cells
+                    .get(cell_idx)
+                    .map(|c| *c == CellType::Empty)
+                    .unwrap_or(true)
+            });
+
+            let uncommitted_lane = if head_lane_available {
+                head_lane
+            } else {
+                // Find an available lane closest to head_lane
+                let mut best_lane = max_lane + 1;
+                let mut best_distance = usize::MAX;
+
+                for candidate_lane in 0..=max_lane + 1 {
+                    let available = (0..head_idx).all(|i| {
+                        let cell_idx = candidate_lane * 2;
+                        nodes[i]
+                            .cells
+                            .get(cell_idx)
+                            .map(|c| *c == CellType::Empty)
+                            .unwrap_or(true)
+                    });
+                    if available {
+                        let distance = if candidate_lane > head_lane {
+                            candidate_lane - head_lane
+                        } else {
+                            head_lane - candidate_lane
+                        };
+                        if distance < best_distance {
+                            best_distance = distance;
+                            best_lane = candidate_lane;
+                        }
+                    }
+                }
+                best_lane
+            };
+
+            // Update max_lane if needed
+            if uncommitted_lane > max_lane {
+                max_lane = uncommitted_lane;
+            }
+
+            // Ensure all nodes have enough cells
+            let required_cells = (max_lane + 1) * 2;
+            for node in nodes.iter_mut() {
+                while node.cells.len() < required_cells {
+                    node.cells.push(CellType::Empty);
+                }
+            }
+
+            // Add Pipe to all nodes before HEAD commit
+            for i in 0..head_idx {
+                let cell_idx = uncommitted_lane * 2;
+                if nodes[i].cells[cell_idx] == CellType::Empty {
+                    nodes[i].cells[cell_idx] = CellType::Pipe(UNCOMMITTED_COLOR_INDEX);
+                }
+            }
+
+            // If uncommitted_lane != head_lane, add a connector from HEAD to the uncommitted lane
+            if uncommitted_lane != head_lane {
+                let head_cell_idx = head_lane * 2;
+                let uncommitted_cell_idx = uncommitted_lane * 2;
+
+                if uncommitted_lane > head_lane {
+                    // Uncommitted lane is to the right - draw horizontal line and curve up (╯)
+                    for col in (head_cell_idx + 1)..uncommitted_cell_idx {
+                        if nodes[head_idx].cells[col] == CellType::Empty {
+                            nodes[head_idx].cells[col] =
+                                CellType::Horizontal(UNCOMMITTED_COLOR_INDEX);
+                        }
+                    }
+                    nodes[head_idx].cells[uncommitted_cell_idx] =
+                        CellType::MergeLeft(UNCOMMITTED_COLOR_INDEX);
+                } else {
+                    // Uncommitted lane is to the left - draw horizontal line and curve up (╰)
+                    for col in (uncommitted_cell_idx + 1)..head_cell_idx {
+                        if nodes[head_idx].cells[col] == CellType::Empty {
+                            nodes[head_idx].cells[col] =
+                                CellType::Horizontal(UNCOMMITTED_COLOR_INDEX);
+                        }
+                    }
+                    nodes[head_idx].cells[uncommitted_cell_idx] =
+                        CellType::MergeRight(UNCOMMITTED_COLOR_INDEX);
+                }
+            }
+
+            // Build cells for the uncommitted node
+            let mut cells = vec![CellType::Empty; required_cells];
+            cells[uncommitted_lane * 2] = CellType::Commit(UNCOMMITTED_COLOR_INDEX);
+
+            // Insert uncommitted node at the beginning
+            nodes.insert(
+                0,
+                GraphNode {
+                    commit: None,
+                    lane: uncommitted_lane,
+                    color_index: UNCOMMITTED_COLOR_INDEX,
+                    branch_names: Vec::new(),
+                    is_head: false,
+                    is_uncommitted: true,
+                    uncommitted_count: count,
+                    cells,
+                },
+            );
         }
     }
 

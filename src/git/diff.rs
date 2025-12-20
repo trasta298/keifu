@@ -47,6 +47,41 @@ pub struct CommitDiffInfo {
 }
 
 impl CommitDiffInfo {
+    /// Get diff info for working tree (staged + unstaged changes)
+    pub fn from_working_tree(repo: &Repository) -> Result<Self> {
+        let head_tree = repo.head()?.peel_to_tree().ok();
+
+        let mut opts = DiffOptions::new();
+        opts.include_untracked(false);
+        opts.ignore_submodules(true);
+        opts.context_lines(0);
+
+        // Staged changes: HEAD -> index
+        let staged_diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
+
+        // Unstaged changes: index -> workdir
+        let unstaged_diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
+
+        // Merge both diffs
+        let mut result = Self::from_diff(&staged_diff)?;
+        let unstaged_result = Self::from_diff(&unstaged_diff)?;
+
+        // Merge unstaged files into result
+        for file in unstaged_result.files {
+            if !result.files.iter().any(|f| f.path == file.path) {
+                if result.files.len() < MAX_FILES_TO_DISPLAY {
+                    result.files.push(file);
+                }
+            }
+        }
+
+        result.total_insertions += unstaged_result.total_insertions;
+        result.total_deletions += unstaged_result.total_deletions;
+        result.total_files = result.files.len();
+
+        Ok(result)
+    }
+
     /// Get diff info for a commit
     /// - Normal commit: diff vs parent
     /// - Merge commit: diff vs first parent

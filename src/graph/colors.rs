@@ -18,8 +18,14 @@ pub const LANE_COLORS: [Color; 11] = [
     Color::LightRed,
 ];
 
+/// Color index for uncommitted changes (gray)
+pub const UNCOMMITTED_COLOR_INDEX: usize = usize::MAX;
+
 /// Get a color from a color index
 pub fn get_color_by_index(color_index: usize) -> Color {
+    if color_index == UNCOMMITTED_COLOR_INDEX {
+        return Color::DarkGray;
+    }
     LANE_COLORS[color_index % LANE_COLORS.len()]
 }
 

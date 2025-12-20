@@ -11,4 +11,4 @@ pub use branch::BranchInfo;
 pub use commit::CommitInfo;
 pub use diff::{CommitDiffInfo, FileChangeKind, FileDiffInfo};
 pub use graph::build_graph;
-pub use repository::GitRepository;
+pub use repository::{GitRepository, WorkingTreeStatus};
