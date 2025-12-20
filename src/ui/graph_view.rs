@@ -30,6 +30,9 @@ impl<'a> GraphViewWidget<'a> {
         // Actual width minus borders
         let inner_width = width.saturating_sub(2) as usize;
 
+        // Get the currently selected branch name
+        let selected_branch_name = app.selected_branch_name();
+
         let items: Vec<ListItem> = app
             .graph_layout
             .nodes
@@ -37,7 +40,13 @@ impl<'a> GraphViewWidget<'a> {
             .enumerate()
             .map(|(idx, node)| {
                 let is_selected = app.graph_list_state.selected() == Some(idx);
-                let line = render_graph_line(node, max_lane, is_selected, inner_width);
+                let line = render_graph_line(
+                    node,
+                    max_lane,
+                    is_selected,
+                    inner_width,
+                    selected_branch_name,
+                );
                 ListItem::new(line)
             })
             .collect();
@@ -50,10 +59,12 @@ impl<'a> GraphViewWidget<'a> {
 /// - If a local branch matches its origin/xxx, show "xxx <-> origin"
 /// - Otherwise, show each name separately
 /// - Render in bold with the graph color, wrapped in brackets
+/// - Selected branch is shown with inverted colors
 fn optimize_branch_display(
     branch_names: &[String],
     is_head: bool,
     color_index: usize,
+    selected_branch_name: Option<&str>,
 ) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
@@ -85,12 +96,26 @@ fn optimize_branch_display(
     } else {
         get_color_by_index(color_index)
     };
-    let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
+
+    // Helper to determine if a branch is selected and create appropriate style
+    let make_style = |branch_name: &str| -> Style {
+        let is_selected = selected_branch_name == Some(branch_name);
+        if is_selected {
+            // Inverted colors for selected branch
+            Style::default()
+                .fg(Color::Black)
+                .bg(base_color)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(base_color).add_modifier(Modifier::BOLD)
+        }
+    };
 
     // Handle local branches
     for local in local_branches.iter() {
         let remote_name = format!("origin/{}", local);
         let has_matching_remote = remote_branches.contains(remote_name.as_str());
+        let style = make_style(local);
 
         if has_matching_remote {
             // Local and remote match -> compact display
@@ -105,6 +130,7 @@ fn optimize_branch_display(
     // Add remote branches without a local counterpart (same color as graph)
     for remote in branch_names.iter().filter(|n| n.starts_with("origin/")) {
         if !processed_remotes.contains(remote) {
+            let style = make_style(remote);
             result.push((format!("[{}]", remote), style));
         }
     }
@@ -132,6 +158,7 @@ fn render_graph_line<'a>(
     max_lane: usize,
     is_selected: bool,
     total_width: usize,
+    selected_branch_name: Option<&str>,
 ) -> Line<'a> {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -212,8 +239,12 @@ fn render_graph_line<'a>(
     // === Left-aligned: branch names + message ===
 
     // Optimize branch names (compact when local matches origin/local)
-    let branch_display =
-        optimize_branch_display(&node.branch_names, node.is_head, node.color_index);
+    let branch_display = optimize_branch_display(
+        &node.branch_names,
+        node.is_head,
+        node.color_index,
+        selected_branch_name,
+    );
 
     // === Right-aligned: date author hash (fixed width) ===
     let date = commit.timestamp.format("%Y-%m-%d").to_string(); // 10 chars

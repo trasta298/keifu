@@ -11,6 +11,8 @@ pub enum Action {
     GoToBottom,
     NextBranch,
     PrevBranch,
+    BranchLeft,
+    BranchRight,
 
     // Git operations
     Checkout,

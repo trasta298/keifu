@@ -45,6 +45,14 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::PrevBranch)
         }
 
+        // Branch selection within same commit
+        (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
+            Some(Action::BranchLeft)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
+            Some(Action::BranchRight)
+        }
+
         // Git operations
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::Checkout),
         (KeyModifiers::NONE, KeyCode::Char('b')) => Some(Action::CreateBranch),

@@ -76,6 +76,12 @@ pub struct App {
     // UI state
     pub graph_list_state: ListState,
 
+    // Branch selection state
+    /// List of (node_index, branch_name) for all branches
+    pub branch_positions: Vec<(usize, String)>,
+    /// Currently selected branch position index
+    pub selected_branch_position: Option<usize>,
+
     // Diff cache (async load)
     diff_cache: Option<CommitDiffInfo>,
     diff_cache_oid: Option<Oid>,
@@ -101,6 +107,14 @@ impl App {
         let mut graph_list_state = ListState::default();
         graph_list_state.select(Some(0));
 
+        // Build branch positions and select the first branch if exists
+        let branch_positions = Self::build_branch_positions(&graph_layout);
+        let selected_branch_position = if branch_positions.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+
         Ok(Self {
             mode: AppMode::Normal,
             repo,
@@ -110,6 +124,8 @@ impl App {
             branches,
             graph_layout,
             graph_list_state,
+            branch_positions,
+            selected_branch_position,
             diff_cache: None,
             diff_cache_oid: None,
             diff_loading_oid: None,
@@ -121,10 +137,33 @@ impl App {
 
     /// Refresh repository data
     pub fn refresh(&mut self) -> Result<()> {
+        // Save the currently selected branch name for restoration
+        let prev_branch_name = self
+            .selected_branch_position
+            .and_then(|pos| self.branch_positions.get(pos))
+            .map(|(_, name)| name.clone());
+
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
         self.graph_layout = build_graph(&self.commits, &self.branches);
         self.head_name = self.repo.head_name();
+
+        // Rebuild branch positions
+        self.branch_positions = Self::build_branch_positions(&self.graph_layout);
+
+        // Restore branch selection if the branch still exists
+        self.selected_branch_position = prev_branch_name.and_then(|name| {
+            self.branch_positions
+                .iter()
+                .position(|(_, n)| n == &name)
+        });
+
+        // Sync node selection with branch selection
+        if let Some(pos) = self.selected_branch_position {
+            if let Some((node_idx, _)) = self.branch_positions.get(pos) {
+                self.graph_list_state.select(Some(*node_idx));
+            }
+        }
 
         // Clear cache
         self.diff_cache = None;
@@ -243,10 +282,16 @@ impl App {
                 self.select_last();
             }
             Action::NextBranch => {
-                self.jump_to_next_branch();
+                self.move_to_next_branch();
             }
             Action::PrevBranch => {
-                self.jump_to_prev_branch();
+                self.move_to_prev_branch();
+            }
+            Action::BranchLeft => {
+                self.move_branch_left();
+            }
+            Action::BranchRight => {
+                self.move_branch_right();
             }
             Action::ToggleHelp => {
                 self.mode = AppMode::Help;
@@ -400,55 +445,131 @@ impl App {
         let current = self.graph_list_state.selected().unwrap_or(0);
         let new = (current as i32 + delta).clamp(0, max as i32) as usize;
         self.graph_list_state.select(Some(new));
+        self.sync_branch_selection_to_node(new);
     }
 
     fn select_first(&mut self) {
         self.graph_list_state.select(Some(0));
+        self.sync_branch_selection_to_node(0);
     }
 
     fn select_last(&mut self) {
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         self.graph_list_state.select(Some(max));
+        self.sync_branch_selection_to_node(max);
     }
 
-    /// Jump to the next commit that has a branch
-    fn jump_to_next_branch(&mut self) {
-        let current = self.graph_list_state.selected().unwrap_or(0);
-        let nodes = &self.graph_layout.nodes;
-
-        // Find the next node after the current position that has a branch name
-        if let Some((i, _)) = nodes
+    /// Sync branch selection to the first branch of the given node
+    fn sync_branch_selection_to_node(&mut self, node_idx: usize) {
+        self.selected_branch_position = self
+            .branch_positions
             .iter()
-            .enumerate()
-            .skip(current + 1)
-            .find(|(_, node)| !node.branch_names.is_empty())
-        {
-            self.graph_list_state.select(Some(i));
+            .position(|(idx, _)| *idx == node_idx);
+    }
+
+    /// Move to the next branch (across all commits)
+    fn move_to_next_branch(&mut self) {
+        if self.branch_positions.is_empty() {
+            return;
+        }
+
+        let next = match self.selected_branch_position {
+            Some(pos) => {
+                if pos + 1 < self.branch_positions.len() {
+                    pos + 1
+                } else {
+                    return; // Already at the last branch
+                }
+            }
+            None => 0, // No branch selected, select the first one
+        };
+
+        self.selected_branch_position = Some(next);
+        if let Some((node_idx, _)) = self.branch_positions.get(next) {
+            self.graph_list_state.select(Some(*node_idx));
         }
     }
 
-    /// Jump to the previous commit that has a branch
-    fn jump_to_prev_branch(&mut self) {
-        let current = self.graph_list_state.selected().unwrap_or(0);
-        let nodes = &self.graph_layout.nodes;
+    /// Move to the previous branch (across all commits)
+    fn move_to_prev_branch(&mut self) {
+        if self.branch_positions.is_empty() {
+            return;
+        }
 
-        // Search backward for a node before the current position that has a branch name
-        if let Some((i, _)) = nodes
-            .iter()
-            .enumerate()
-            .take(current)
-            .rev()
-            .find(|(_, node)| !node.branch_names.is_empty())
-        {
-            self.graph_list_state.select(Some(i));
+        let prev = match self.selected_branch_position {
+            Some(pos) => {
+                if pos > 0 {
+                    pos - 1
+                } else {
+                    return; // Already at the first branch
+                }
+            }
+            None => self.branch_positions.len() - 1, // No branch selected, select the last one
+        };
+
+        self.selected_branch_position = Some(prev);
+        if let Some((node_idx, _)) = self.branch_positions.get(prev) {
+            self.graph_list_state.select(Some(*node_idx));
         }
     }
 
-    /// Get the branch associated with the selected commit
+    /// Move to the left branch within the same commit
+    fn move_branch_left(&mut self) {
+        let Some(pos) = self.selected_branch_position else {
+            return;
+        };
+        if pos == 0 {
+            return;
+        }
+
+        let Some((current_node, _)) = self.branch_positions.get(pos) else {
+            return;
+        };
+        let Some((prev_node, _)) = self.branch_positions.get(pos - 1) else {
+            return;
+        };
+
+        // Only move within the same commit
+        if current_node == prev_node {
+            self.selected_branch_position = Some(pos - 1);
+        }
+    }
+
+    /// Move to the right branch within the same commit
+    fn move_branch_right(&mut self) {
+        let Some(pos) = self.selected_branch_position else {
+            return;
+        };
+        if pos + 1 >= self.branch_positions.len() {
+            return;
+        }
+
+        let Some((current_node, _)) = self.branch_positions.get(pos) else {
+            return;
+        };
+        let Some((next_node, _)) = self.branch_positions.get(pos + 1) else {
+            return;
+        };
+
+        // Only move within the same commit
+        if current_node == next_node {
+            self.selected_branch_position = Some(pos + 1);
+        }
+    }
+
+    /// Get the currently selected branch
     fn selected_branch(&self) -> Option<&BranchInfo> {
-        let node = self.selected_commit_node()?;
-        let branch_name = node.branch_names.first()?;
+        let (_, branch_name) = self
+            .selected_branch_position
+            .and_then(|pos| self.branch_positions.get(pos))?;
         self.branches.iter().find(|b| &b.name == branch_name)
+    }
+
+    /// Get the name of the currently selected branch
+    pub fn selected_branch_name(&self) -> Option<&str> {
+        self.selected_branch_position
+            .and_then(|pos| self.branch_positions.get(pos))
+            .map(|(_, name)| name.as_str())
     }
 
     fn selected_commit_node(&self) -> Option<&crate::git::graph::GraphNode> {
@@ -458,21 +579,55 @@ impl App {
     }
 
     fn do_checkout(&mut self) -> Result<()> {
-        if let Some(node) = self.selected_commit_node() {
-            // Checkout a branch if present, otherwise checkout the commit
-            if let Some(branch_name) = node.branch_names.first() {
-                if branch_name.starts_with("origin/") {
-                    // For remote branches, create a local branch and check it out
-                    checkout_remote_branch(&self.repo.repo, branch_name)?;
-                } else {
-                    checkout_branch(&self.repo.repo, branch_name)?;
-                }
-                self.refresh()?;
-            } else if let Some(commit) = &node.commit {
+        if let Some(branch) = self.selected_branch() {
+            let branch_name = branch.name.clone();
+            if branch_name.starts_with("origin/") {
+                // For remote branches, create a local branch and check it out
+                checkout_remote_branch(&self.repo.repo, &branch_name)?;
+            } else {
+                checkout_branch(&self.repo.repo, &branch_name)?;
+            }
+            self.refresh()?;
+        } else if let Some(node) = self.selected_commit_node() {
+            if let Some(commit) = &node.commit {
                 checkout_commit(&self.repo.repo, commit.oid)?;
                 self.refresh()?;
             }
         }
         Ok(())
+    }
+
+    /// Build a flat list of (node_index, branch_name) for all branches
+    /// Excludes remote branches that have a matching local branch (e.g., origin/main when main exists)
+    fn build_branch_positions(graph_layout: &GraphLayout) -> Vec<(usize, String)> {
+        use std::collections::HashSet;
+
+        graph_layout
+            .nodes
+            .iter()
+            .enumerate()
+            .flat_map(|(node_idx, node)| {
+                // Collect local branch names in this node
+                let local_branches: HashSet<&str> = node
+                    .branch_names
+                    .iter()
+                    .filter(|n| !n.starts_with("origin/"))
+                    .map(|s| s.as_str())
+                    .collect();
+
+                // Filter out remote branches that have a matching local branch
+                node.branch_names
+                    .iter()
+                    .filter(move |name| {
+                        if let Some(local_name) = name.strip_prefix("origin/") {
+                            // Exclude if there's a matching local branch
+                            !local_branches.contains(local_name)
+                        } else {
+                            true // Keep all local branches
+                        }
+                    })
+                    .map(move |name| (node_idx, name.clone()))
+            })
+            .collect()
     }
 }

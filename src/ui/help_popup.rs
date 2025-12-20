@@ -35,11 +35,19 @@ impl Widget for HelpPopup {
             ]),
             Line::from(vec![
                 Span::styled("  ] / Tab    ", key_style),
-                Span::styled("Jump to next branch", desc_style),
+                Span::styled("Select next branch", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  [ / S-Tab  ", key_style),
-                Span::styled("Jump to previous branch", desc_style),
+                Span::styled("Select previous branch", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  h / ←      ", key_style),
+                Span::styled("Select left branch (same commit)", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  l / →      ", key_style),
+                Span::styled("Select right branch (same commit)", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+d     ", key_style),
