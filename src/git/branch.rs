@@ -1,4 +1,4 @@
-//! ブランチ情報の構造体と操作
+//! Branch info structure and operations
 
 use anyhow::Result;
 use git2::{BranchType, Oid, Repository};
@@ -16,10 +16,10 @@ impl BranchInfo {
     pub fn list_all(repo: &Repository) -> Result<Vec<Self>> {
         let mut branches = Vec::new();
 
-        // HEADの取得
+        // Get HEAD
         let head_oid = repo.head().ok().and_then(|r| r.target());
 
-        // ローカルブランチ
+        // Local branches
         for branch_result in repo.branches(Some(BranchType::Local))? {
             let (branch, _) = branch_result?;
             if let Some(name) = branch.name()? {
@@ -44,7 +44,7 @@ impl BranchInfo {
             }
         }
 
-        // リモートブランチ
+        // Remote branches
         for branch_result in repo.branches(Some(BranchType::Remote))? {
             let (branch, _) = branch_result?;
             if let Some(name) = branch.name()? {
@@ -61,7 +61,7 @@ impl BranchInfo {
             }
         }
 
-        // HEADのブランチを先頭に
+        // Put the HEAD branch first
         branches.sort_by(|a, b| b.is_head.cmp(&a.is_head).then(a.name.cmp(&b.name)));
 
         Ok(branches)

@@ -1,4 +1,4 @@
-//! Repository操作ラッパー
+//! Repository operation wrapper
 
 use std::path::Path;
 
@@ -13,7 +13,7 @@ pub struct GitRepository {
 }
 
 impl GitRepository {
-    /// カレントディレクトリからリポジトリを検出
+    /// Discover a repository from the current directory
     pub fn discover() -> Result<Self> {
         let repo = Repository::discover(".")
             .context("Git repository not found. Please run inside a Git repository.")?;
@@ -25,7 +25,7 @@ impl GitRepository {
         Ok(Self { repo, path })
     }
 
-    /// 指定パスからリポジトリを開く
+    /// Open a repository from a specified path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo = Repository::open(path.as_ref())
             .context("Git repository not found at specified path.")?;
@@ -40,12 +40,12 @@ impl GitRepository {
         })
     }
 
-    /// コミット履歴を取得（新しい順）
+    /// Get commit history (newest first)
     pub fn get_commits(&self, max_count: usize) -> Result<Vec<CommitInfo>> {
         let mut revwalk = self.repo.revwalk()?;
         revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 
-        // すべてのブランチを対象にする
+        // Include all branches
         for branch_result in self.repo.branches(None)? {
             let (branch, _) = branch_result?;
             if let Some(oid) = branch.get().target() {
@@ -63,12 +63,12 @@ impl GitRepository {
         Ok(commits)
     }
 
-    /// ブランチ一覧を取得
+    /// Get branch list
     pub fn get_branches(&self) -> Result<Vec<BranchInfo>> {
         BranchInfo::list_all(&self.repo)
     }
 
-    /// 現在のHEADの名前を取得
+    /// Get the current HEAD name
     pub fn head_name(&self) -> Option<String> {
         self.repo
             .head()

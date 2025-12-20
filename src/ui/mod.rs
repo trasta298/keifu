@@ -1,4 +1,4 @@
-//! UIコンポーネント
+//! UI components
 
 pub mod commit_detail;
 pub mod dialog;
@@ -21,14 +21,14 @@ use self::{
     status_bar::StatusBar,
 };
 
-/// メインUIを描画
+/// Render the main UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    // diffキャッシュを更新（描画前に1回だけ）
+    // Update the diff cache once before rendering
     app.update_diff_cache();
 
     let area = frame.area();
 
-    // 縦分割: メイン + ステータスバー(1行)
+    // Vertical split: main area + status bar (1 row)
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -37,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let main_area = vertical[0];
     let status_area = vertical[1];
 
-    // メインを縦分割: グラフ(70%) + 詳細(30%)
+    // Split main area vertically: graph (70%) + detail (30%)
     let content_vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -46,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let graph_area = content_vertical[0];
     let detail_area = content_vertical[1];
 
-    // 各Widgetを描画
+    // Render widgets
     frame.render_stateful_widget(
         GraphViewWidget::new(app, graph_area.width),
         graph_area,
@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(CommitDetailWidget::new(app), detail_area);
     frame.render_widget(StatusBar::new(app), status_area);
 
-    // ポップアップ
+    // Popups
     match &app.mode {
         crate::app::AppMode::Help => {
             let popup_area = centered_rect(60, 70, area);
@@ -73,7 +73,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// 中央に配置された矩形を計算
+/// Calculate a centered rectangle
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

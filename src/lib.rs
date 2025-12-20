@@ -1,4 +1,4 @@
-//! git-graph-tui ライブラリ
+//! git-graph-tui library
 
 pub mod action;
 pub mod app;

@@ -1,14 +1,14 @@
-//! コミット差分情報
+//! Commit diff information
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use git2::{Delta, Diff, DiffOptions, Oid, Repository};
 
-/// 表示するファイルの最大数
+/// Maximum number of files to display
 const MAX_FILES_TO_DISPLAY: usize = 50;
 
-/// ファイルの変更種別
+/// File change kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileChangeKind {
     Added,
@@ -18,55 +18,55 @@ pub enum FileChangeKind {
     Copied,
 }
 
-/// 個別ファイルの差分情報
+/// Per-file diff info
 #[derive(Debug, Clone)]
 pub struct FileDiffInfo {
-    /// ファイルパス
+    /// File path
     pub path: PathBuf,
-    /// 変更種別
+    /// Change kind
     pub kind: FileChangeKind,
-    /// 追加行数
+    /// Insertions
     pub insertions: usize,
-    /// 削除行数
+    /// Deletions
     pub deletions: usize,
 }
 
-/// コミットの差分情報
+/// Commit diff info
 #[derive(Debug, Clone, Default)]
 pub struct CommitDiffInfo {
-    /// 変更ファイル一覧（最大MAX_FILES_TO_DISPLAY件）
+    /// Changed files list (up to MAX_FILES_TO_DISPLAY)
     pub files: Vec<FileDiffInfo>,
-    /// 合計追加行数
+    /// Total insertions
     pub total_insertions: usize,
-    /// 合計削除行数
+    /// Total deletions
     pub total_deletions: usize,
-    /// 総ファイル数
+    /// Total files
     pub total_files: usize,
-    /// 切り捨てられたかどうか
+    /// Whether truncated
     pub truncated: bool,
 }
 
 impl CommitDiffInfo {
-    /// コミットの差分情報を取得
-    /// - 通常コミット: 親との差分
-    /// - マージコミット: 最初の親との差分
-    /// - 初期コミット: 空treeとの差分
+    /// Get diff info for a commit
+    /// - Normal commit: diff vs parent
+    /// - Merge commit: diff vs first parent
+    /// - Initial commit: diff vs empty tree
     pub fn from_commit(repo: &Repository, commit_oid: Oid) -> Result<Self> {
         let commit = repo.find_commit(commit_oid)?;
         let new_tree = commit.tree()?;
 
-        // 親treeを取得（初期コミットの場合はNone）
+        // Get parent tree (None for initial commit)
         let old_tree = if commit.parent_count() > 0 {
             Some(commit.parent(0)?.tree()?)
         } else {
             None
         };
 
-        // diff生成（高速化オプション）
+        // Generate diff (performance options)
         let mut opts = DiffOptions::new();
-        opts.minimal(false);           // 最小差分計算をスキップ
-        opts.ignore_submodules(true);  // サブモジュールをスキップ
-        opts.context_lines(0);         // コンテキスト行を0に
+        opts.minimal(false);           // Skip minimal diff calculation
+        opts.ignore_submodules(true);  // Skip submodules
+        opts.context_lines(0);         // Set context lines to 0
 
         let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), Some(&mut opts))?;
 
@@ -77,13 +77,13 @@ impl CommitDiffInfo {
         let total_files = diff.deltas().len();
         let truncated = total_files > MAX_FILES_TO_DISPLAY;
 
-        // ファイル情報を収集（上限まで）
+        // Collect file info (up to limit)
         let mut files: Vec<FileDiffInfo> = Vec::with_capacity(MAX_FILES_TO_DISPLAY.min(total_files));
 
         for delta_idx in 0..total_files.min(MAX_FILES_TO_DISPLAY) {
             let delta = diff.get_delta(delta_idx).unwrap();
 
-            // バイナリファイルはスキップ
+            // Skip binary files
             if delta.flags().is_binary() {
                 continue;
             }
@@ -113,7 +113,7 @@ impl CommitDiffInfo {
             }
         }
 
-        // 行数をカウント（バイナリはスキップ済み）
+        // Count lines (binaries already skipped)
         let mut total_insertions = 0;
         let mut total_deletions = 0;
 
@@ -122,7 +122,7 @@ impl CommitDiffInfo {
             None,
             None,
             Some(&mut |delta, _hunk, line| {
-                // バイナリはスキップ
+                // Skip binaries
                 if delta.flags().is_binary() {
                     return true;
                 }

@@ -1,3 +1,3 @@
-//! グラフ描画レイヤー
+//! Graph rendering layer
 
 pub mod colors;

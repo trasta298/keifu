@@ -1,4 +1,4 @@
-//! Terminal制御（raw mode, alternate screen）
+//! Terminal control (raw mode, alternate screen)
 
 use std::io::{self, Stdout};
 
@@ -11,7 +11,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
-/// Terminalを初期化してraw modeとalternate screenを有効化
+/// Initialize the terminal and enable raw mode and the alternate screen
 pub fn init() -> Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -21,7 +21,7 @@ pub fn init() -> Result<Tui> {
     Ok(terminal)
 }
 
-/// Terminalを復元
+/// Restore the terminal
 pub fn restore() -> Result<()> {
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen)?;

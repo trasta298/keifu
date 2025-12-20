@@ -1,4 +1,4 @@
-//! コミット詳細Widget
+//! Commit detail widget
 
 use ratatui::{
     buffer::Buffer,
@@ -22,7 +22,7 @@ impl<'a> CommitDetailWidget<'a> {
 
         if let Some(selected) = app.graph_list_state.selected() {
             if let Some(node) = app.graph_layout.nodes.get(selected) {
-                // 接続行の場合はスキップ
+                // Skip connector rows
                 let Some(commit) = &node.commit else {
                     commit_lines.push(Line::from(Span::styled(
                         "(connector line)",
@@ -34,13 +34,13 @@ impl<'a> CommitDetailWidget<'a> {
                     };
                 };
 
-                // コミットハッシュ
+                // Commit hash
                 commit_lines.push(Line::from(vec![
                     Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
                 ]));
 
-                // 著者
+                // Author
                 commit_lines.push(Line::from(vec![
                     Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
@@ -49,7 +49,7 @@ impl<'a> CommitDetailWidget<'a> {
                     ),
                 ]));
 
-                // 日時
+                // Date
                 commit_lines.push(Line::from(vec![
                     Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
@@ -58,7 +58,7 @@ impl<'a> CommitDetailWidget<'a> {
                     ),
                 ]));
 
-                // 親コミット
+                // Parent commits
                 if !commit.parent_oids.is_empty() {
                     let parents: Vec<String> = commit
                         .parent_oids
@@ -73,7 +73,7 @@ impl<'a> CommitDetailWidget<'a> {
 
                 commit_lines.push(Line::from(""));
 
-                // メッセージ
+                // Message
                 for line in commit.full_message.lines() {
                     commit_lines.push(Line::from(Span::raw(line.to_string())));
                 }
@@ -85,7 +85,7 @@ impl<'a> CommitDetailWidget<'a> {
             )));
         }
 
-        // ファイル一覧を構築（キャッシュから）
+        // Build the file list (from cache)
         let file_lines = if app.is_diff_loading() {
             vec![Line::from(Span::styled(
                 "Loading...",
@@ -108,7 +108,7 @@ impl<'a> CommitDetailWidget<'a> {
             return lines;
         };
 
-        // ヘッダー行
+        // Header row
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{} files changed", diff.total_files),
@@ -127,7 +127,7 @@ impl<'a> CommitDetailWidget<'a> {
         ]));
         lines.push(Line::from(""));
 
-        // ファイル一覧
+        // File list
         for file in &diff.files {
             let (indicator, color) = match file.kind {
                 FileChangeKind::Added => ("A", Color::Green),
@@ -155,7 +155,7 @@ impl<'a> CommitDetailWidget<'a> {
             ]));
         }
 
-        // 切り捨てメッセージ
+        // Truncation message
         if diff.truncated {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -170,13 +170,13 @@ impl<'a> CommitDetailWidget<'a> {
 
 impl<'a> Widget for CommitDetailWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // 水平分割: 左50% (コミット情報) / 右50% (ファイル一覧)
+        // Horizontal split: left 50% (commit info) / right 50% (file list)
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 
-        // 左側: コミット情報
+        // Left: commit info
         let left_block = Block::default()
             .title(" Commit Detail ")
             .borders(Borders::ALL)
@@ -188,7 +188,7 @@ impl<'a> Widget for CommitDetailWidget<'a> {
 
         Widget::render(left_paragraph, chunks[0], buf);
 
-        // 右側: ファイル一覧
+        // Right: file list
         let right_block = Block::default()
             .title(" Changed Files ")
             .borders(Borders::ALL)

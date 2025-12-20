@@ -1,4 +1,4 @@
-//! コミットグラフの構築
+//! Commit graph construction
 
 use std::collections::HashMap;
 
@@ -7,60 +7,60 @@ use git2::Oid;
 use super::{BranchInfo, CommitInfo};
 use crate::graph::colors::ColorAssigner;
 
-/// グラフノード
+/// Graph node
 #[derive(Debug, Clone)]
 pub struct GraphNode {
-    /// コミット情報（None の場合は接続行のみ）
+    /// Commit info (None means connector row only)
     pub commit: Option<CommitInfo>,
-    /// このコミットのレーン位置
+    /// Lane position for this commit
     pub lane: usize,
-    /// このノードのカラーインデックス
+    /// Color index for this node
     pub color_index: usize,
-    /// このコミットを指すブランチ名のリスト
+    /// Branch names pointing to this commit
     pub branch_names: Vec<String>,
-    /// HEADがこのコミットを指しているか
+    /// Whether HEAD points to this commit
     pub is_head: bool,
-    /// この行の描画情報
+    /// Render info for this row
     pub cells: Vec<CellType>,
 }
 
-/// セルの種類
+/// Cell types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellType {
-    /// 空
+    /// Empty
     Empty,
-    /// 縦線（継続中のレーン）
+    /// Vertical line (active lane)
     Pipe(usize),
-    /// コミットノード
+    /// Commit node
     Commit(usize),
-    /// 右への分岐開始 ╭ (ブランチが右上へ分岐)
+    /// Start branch to the right ╭ (branch goes up-right)
     BranchRight(usize),
-    /// 左への分岐開始 ╮ (ブランチが左上へ分岐)
+    /// Start branch to the left ╮ (branch goes up-left)
     BranchLeft(usize),
-    /// 右へのマージ ╰ (ブランチが右下から合流)
+    /// Merge from the right ╰ (branch joins from down-right)
     MergeRight(usize),
-    /// 左へのマージ ╯ (ブランチが左下から合流)
+    /// Merge from the left ╯ (branch joins from down-left)
     MergeLeft(usize),
-    /// 横線
+    /// Horizontal line
     Horizontal(usize),
-    /// 横線（レーン通過）
+    /// Horizontal line (lane crossing)
     HorizontalPipe(usize, usize), // (horizontal_lane, pipe_lane)
-    /// T字分岐（右へ）├
+    /// T junction to the right ├
     TeeRight(usize),
-    /// T字分岐（左へ）┤
+    /// T junction to the left ┤
     TeeLeft(usize),
-    /// 上向きT字（フォーク分岐点）┴
+    /// Upward T junction (fork point) ┴
     TeeUp(usize),
 }
 
-/// グラフレイアウト
+/// Graph layout
 #[derive(Debug, Clone)]
 pub struct GraphLayout {
     pub nodes: Vec<GraphNode>,
     pub max_lane: usize,
 }
 
-/// コミット一覧からグラフを構築
+/// Build a graph from commit list
 pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayout {
     if commits.is_empty() {
         return GraphLayout {
@@ -69,7 +69,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
         };
     }
 
-    // OID -> ブランチ名のマッピング
+    // OID -> branch name mapping
     let mut oid_to_branches: HashMap<Oid, Vec<String>> = HashMap::new();
     let mut head_oid: Option<Oid> = None;
     for branch in branches {
@@ -82,15 +82,15 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
         }
     }
 
-    // OID -> 行番号のマッピング
+    // OID -> row index mapping
     let oid_to_row: HashMap<Oid, usize> = commits
         .iter()
         .enumerate()
         .map(|(i, c)| (c.oid, i))
         .collect();
 
-    // フォークポイントの検出（複数の子を持つコミット）
-    // parent_oid -> 子コミットのリスト
+    // Detect fork points (commits with multiple children)
+    // parent_oid -> list of child commits
     let mut parent_children: HashMap<Oid, Vec<Oid>> = HashMap::new();
     for commit in commits {
         if let Some(first_parent) = commit.parent_oids.first() {
@@ -102,39 +102,39 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             }
         }
     }
-    // フォークポイント: 2つ以上の子を持つコミット
+    // Fork points: commits with 2+ children
     let fork_points: std::collections::HashSet<Oid> = parent_children
         .iter()
         .filter(|(_, children)| children.len() >= 2)
         .map(|(parent, _)| *parent)
         .collect();
 
-    // レーン管理: 各レーンが追跡中のOID
+    // Lane tracking: OID tracked by each lane
     let mut lanes: Vec<Option<Oid>> = Vec::new();
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut max_lane: usize = 0;
 
-    // 色管理
+    // Color management
     let mut color_assigner = ColorAssigner::new();
-    // OID -> カラーインデックスのマッピング
+    // OID -> color index mapping
     let mut oid_color_index: HashMap<Oid, usize> = HashMap::new();
-    // レーン -> カラーインデックスのマッピング（フォーク時に各ブランチの色を保持）
+    // Lane -> color index mapping (keep colors during forks)
     let mut lane_color_index: HashMap<usize, usize> = HashMap::new();
 
     for commit in commits {
-        // 新しい行の処理を開始
+        // Start processing a new row
         color_assigner.advance_row();
 
-        // このコミットのOIDを追跡中のレーンを探す
+        // Find the lane tracking this commit OID
         let commit_lane_opt = lanes
             .iter()
             .position(|l| l.map(|oid| oid == commit.oid).unwrap_or(false));
 
-        // レーンを決定
+        // Determine the lane
         let lane = if let Some(l) = commit_lane_opt {
             l
         } else {
-            // 空きレーンを探すか、新規作成
+            // Find an empty lane or create one
             let empty = lanes.iter().position(|l| l.is_none());
             if let Some(l) = empty {
                 l
@@ -144,8 +144,8 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             }
         };
 
-        // フォークポイントの処理: 複数レーンがこのコミットを追跡している場合
-        // フォークコネクタを生成して、追加のレーンを解放
+        // Fork point handling: multiple lanes track this commit
+        // Build fork connector and release extra lanes
         let fork_lanes: Vec<usize> = lanes
             .iter()
             .enumerate()
@@ -154,13 +154,13 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             .collect();
 
         if fork_lanes.len() >= 2 {
-            // 最小のレーンをメインとして使用
+            // Use the smallest lane as main
             let main_lane = *fork_lanes.iter().min().unwrap();
             let merging_lanes: Vec<(usize, usize)> = fork_lanes
                 .iter()
                 .filter(|&&l| l != main_lane)
                 .map(|&l| {
-                    // 各レーンの色を使用（レーンの色がなければOIDの色、それもなければレーン番号）
+                    // Use lane color, else OID color, else lane index
                     let color = lane_color_index.get(&l)
                         .copied()
                         .or_else(|| oid_color_index.get(&commit.oid).copied())
@@ -169,7 +169,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 })
                 .collect();
 
-            // フォークコネクタのmax_lane更新
+            // Update max_lane for fork connector
             for &(l, _) in &merging_lanes {
                 max_lane = max_lane.max(l);
             }
@@ -197,7 +197,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 cells: fork_connector_cells,
             });
 
-            // マージするレーンを解放
+            // Release merging lanes
             for &(l, _) in &merging_lanes {
                 if l < lanes.len() {
                     lanes[l] = None;
@@ -207,28 +207,28 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             }
         }
 
-        // カラーインデックスを決定
+        // Determine color index
         let commit_color_index = if commit_lane_opt.is_some() {
-            // 既存のブランチを継続
+            // Continue existing branch
             color_assigner.continue_lane(lane)
         } else if nodes.is_empty() {
-            // 最初のコミット（メインブランチ）- 色を予約して他のブランチで使用不可にする
+            // First commit (main branch) - reserve color so others cannot use it
             color_assigner.assign_main_color(lane)
         } else {
-            // 新しいブランチ開始 - 新しい色を割り当て（予約色は除外）
+            // New branch start - assign a new color (exclude reserved)
             color_assigner.assign_color(lane)
         };
         oid_color_index.insert(commit.oid, commit_color_index);
-        // レーンの色を記録（フォーク時に各ブランチの色を保持するため）
+        // Record lane color (to preserve colors during forks)
         lane_color_index.insert(lane, commit_color_index);
 
-        // このコミットのレーンをクリア
+        // Clear this commit lane
         if lane < lanes.len() {
             lanes[lane] = None;
         }
 
-        // 親コミットの処理
-        // (OID, レーン, 既存追跡か否か, カラーインデックス)
+        // Process parent commits
+        // (OID, lane, already tracked?, color index)
         let mut parent_lanes: Vec<(Oid, usize, bool, usize)> = Vec::new();
         let valid_parents: Vec<Oid> = commit
             .parent_oids
@@ -237,50 +237,50 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             .copied()
             .collect();
 
-        // フォーク兄弟かどうか（親がフォークポイントで、既に別レーンで追跡中）
+        // Whether this is a fork sibling (parent is a fork point tracked on another lane)
         let mut is_fork_sibling = false;
-        // フォーク兄弟の場合の色（commit_color_indexを上書きするため）
+        // Color for fork siblings (overrides commit_color_index)
         let mut fork_sibling_color: Option<usize> = None;
 
-        // 複数の親がある場合（マージコミット）はフォーク処理を開始
+        // Start fork handling for merge commits (multiple parents)
         if valid_parents.len() >= 2 {
             color_assigner.begin_fork();
         }
 
         for (parent_idx, parent_oid) in valid_parents.iter().enumerate() {
-            // 親がすでにレーンにあるか確認
+            // Check if the parent is already in a lane
             let existing_parent_lane = lanes
                 .iter()
                 .position(|l| l.map(|oid| oid == *parent_oid).unwrap_or(false));
 
             let (parent_lane, was_existing, parent_color) = if let Some(pl) = existing_parent_lane {
-                // 親がフォークポイントの場合、フォーク兄弟として扱う
+                // If parent is a fork point, treat as fork sibling
                 if parent_idx == 0 && fork_points.contains(parent_oid) {
-                    // このコミットのレーンでも親を追跡（複数レーンで同じOIDを追跡）
+                    // Track the parent on this lane as well (same OID on multiple lanes)
                     lanes[lane] = Some(*parent_oid);
                     is_fork_sibling = true;
-                    // メインレーンの場合は色を変更しない、それ以外はcommit_color_indexを使用
+                    // Keep main lane color, otherwise use commit_color_index
                     let color = if color_assigner.is_main_lane(lane) {
                         color_assigner.get_main_color()
                     } else {
-                        // 現在のコミットの色を使用（新しい色は割り当てない）
+                        // Use current commit color (do not assign new)
                         commit_color_index
                     };
                     fork_sibling_color = Some(color);
                     lane_color_index.insert(lane, color);
                     (lane, false, color)
                 } else {
-                    // 既存レーン - 既存の色を使用
+                    // Existing lane - use existing color
                     let color = oid_color_index.get(parent_oid).copied().unwrap_or(pl);
                     (pl, true, color)
                 }
             } else if parent_idx == 0 {
-                // 最初の親は同じレーンを使用 - 同じ色を継承
+                // First parent uses the same lane - inherit color
                 lanes[lane] = Some(*parent_oid);
                 oid_color_index.insert(*parent_oid, commit_color_index);
                 (lane, false, commit_color_index)
             } else {
-                // 2番目以降の親は別レーンを使用 - フォーク兄弟として色を割り当て
+                // Subsequent parents use new lanes - assign fork sibling colors
                 let empty = lanes.iter().position(|l| l.is_none());
                 let new_lane = if let Some(l) = empty {
                     l
@@ -298,27 +298,27 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             parent_lanes.push((*parent_oid, parent_lane, was_existing, parent_color));
         }
 
-        // フォーク兄弟の場合はlane_mergeをスキップ
-        let _ = is_fork_sibling; // 後で使用
+        // Skip lane_merge for fork siblings
+        let _ = is_fork_sibling; // Reserved for future use
 
-        // フォーク兄弟の色が設定されていればそれを使用
+        // Use fork sibling color if set
         let final_color_index = fork_sibling_color.unwrap_or(commit_color_index);
 
-        // max_laneを更新
+        // Update max_lane
         max_lane = max_lane.max(lane);
         for &(_, pl, _, _) in &parent_lanes {
             max_lane = max_lane.max(pl);
         }
 
-        // レーン統合が必要かチェック
-        // コミットのレーンと親のレーンが異なり、親が既に追跡されている場合
-        // → 高いレーンが終了して低いレーンに合流する
+        // Check whether lane merge is needed
+        // If commit lane differs from parent lane and parent is already tracked
+        // -> higher lane ends and merges into lower lane
         let lane_merge: Option<(usize, usize)> = parent_lanes
             .iter()
             .find(|(_, pl, was_existing, _)| *was_existing && *pl != lane)
             .map(|(_, pl, _, color)| (*pl, *color));
 
-        // この行のセルを生成（was_existing の親への接続線は除外 - 接続行で描画する）
+        // Build cells for this row (exclude lines to was_existing parents; rendered in connector row)
         let non_merging_parents: Vec<(Oid, usize, bool, usize)> = parent_lanes
             .iter()
             .filter(|(_, pl, was_existing, _)| !(*was_existing && *pl != lane))
@@ -334,7 +334,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             max_lane,
         );
 
-        // ブランチ名を取得
+        // Get branch names
         let branch_names = oid_to_branches
             .get(&commit.oid)
             .cloned()
@@ -342,7 +342,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
 
         let is_head = head_oid.map(|h| h == commit.oid).unwrap_or(false);
 
-        // コミット行を追加
+        // Add commit row
         nodes.push(GraphNode {
             commit: Some(commit.clone()),
             lane,
@@ -352,10 +352,10 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
             cells,
         });
 
-        // 接続行をコミット行の後に追加（レーン統合がある場合）
-        // 接続行は終了するレーンの最後のコミットの後に来る
+        // Add a connector row after the commit row (when lanes merge)
+        // Connector row comes after the last commit of the ending lane
         if let Some((parent_lane, _)) = lane_merge {
-            // 常に低いレーンがメイン（├）、高いレーンがマージ終了（╯）
+            // Lower lane is main (├), higher lane ends with merge (╯)
             let (main_lane, ending_lane) = if parent_lane < lane {
                 (parent_lane, lane)
             } else {
@@ -390,9 +390,9 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
                 cells: connector_cells,
             });
 
-            // 終了するレーンを解放
+            // Release the ending lane
             if ending_lane < lanes.len() {
-                // 終了レーンのOIDをメインレーンに統合
+                // Move the ending lane OID into the main lane
                 if let Some(oid) = lanes[ending_lane] {
                     if lanes.get(main_lane).map(|l| l.is_none()).unwrap_or(false) {
                         lanes[main_lane] = Some(oid);
@@ -408,7 +408,7 @@ pub fn build_graph(commits: &[CommitInfo], branches: &[BranchInfo]) -> GraphLayo
     GraphLayout { nodes, max_lane }
 }
 
-/// 接続行のセルを構築（ブランチがマージする行）- 色インデックス版
+/// Build connector row cells (merge row) - color index version
 fn build_connector_cells_with_colors(
     main_lane: usize,
     main_color: usize,
@@ -420,16 +420,16 @@ fn build_connector_cells_with_colors(
 ) -> Vec<CellType> {
     let mut cells = vec![CellType::Empty; (max_lane + 1) * 2];
 
-    // メインレーンにT字分岐を描画
+    // Draw a T junction on the main lane
     let main_cell_idx = main_lane * 2;
     if main_cell_idx < cells.len() {
         cells[main_cell_idx] = CellType::TeeRight(main_color);
     }
 
-    // マージするレーン番号のリスト
+    // List of merging lane numbers
     let merging_lane_nums: Vec<usize> = merging_lanes.iter().map(|(l, _)| *l).collect();
 
-    // アクティブなレーンに縦線を描画（メインレーンとマージレーン以外）
+    // Draw vertical lines for active lanes (except main and merging lanes)
     for (lane_idx, lane_oid) in active_lanes.iter().enumerate() {
         if let Some(oid) = lane_oid {
             if lane_idx != main_lane && !merging_lane_nums.contains(&lane_idx) {
@@ -445,9 +445,9 @@ fn build_connector_cells_with_colors(
         }
     }
 
-    // マージするレーンへの接続線を描画
+    // Draw connectors to merging lanes
     for &(merge_lane, merge_color) in merging_lanes {
-        // メインレーンからマージレーンへの横線
+        // Horizontal line from main lane to merging lane
         for col in (main_lane * 2 + 1)..(merge_lane * 2) {
             if col < cells.len() {
                 let existing = cells[col];
@@ -458,7 +458,7 @@ fn build_connector_cells_with_colors(
                 }
             }
         }
-        // マージレーンの終点
+        // End of merge lane
         let end_idx = merge_lane * 2;
         if end_idx < cells.len() {
             cells[end_idx] = CellType::MergeLeft(merge_color);
@@ -468,8 +468,8 @@ fn build_connector_cells_with_colors(
     cells
 }
 
-/// 1行分のセルを構築 - 色インデックス版
-/// parent_lanes: (親OID, レーン番号, 既存追跡フラグ, カラーインデックス)
+/// Build cells for one row - color index version
+/// parent_lanes: (parent OID, lane, existing-tracked flag, color index)
 fn build_row_cells_with_colors(
     commit_lane: usize,
     commit_color: usize,
@@ -481,13 +481,13 @@ fn build_row_cells_with_colors(
 ) -> Vec<CellType> {
     let mut cells = vec![CellType::Empty; (max_lane + 1) * 2];
 
-    // アクティブなレーンに縦線を描画
+    // Draw vertical lines for active lanes
     for (lane_idx, lane_oid) in active_lanes.iter().enumerate() {
         if let Some(oid) = lane_oid {
             if lane_idx != commit_lane {
                 let cell_idx = lane_idx * 2;
                 if cell_idx < cells.len() {
-                    // レーンの色を優先、なければOIDの色、それもなければレーン番号
+                    // Prefer lane color, else OID color, else lane index
                     let color = lane_color_index.get(&lane_idx)
                         .copied()
                         .or_else(|| oid_color_index.get(oid).copied())
@@ -498,23 +498,23 @@ fn build_row_cells_with_colors(
         }
     }
 
-    // コミットノードを描画
+    // Draw commit node
     let commit_cell_idx = commit_lane * 2;
     if commit_cell_idx < cells.len() {
         cells[commit_cell_idx] = CellType::Commit(commit_color);
     }
 
-    // 親への接続線を描画
+    // Draw connections to parents
     for &(_parent_oid, parent_lane, was_existing, parent_color) in parent_lanes.iter() {
         if parent_lane == commit_lane {
-            // 同じレーン - 縦線のみ（次の行で描画）
+            // Same lane - only a vertical line (drawn on next row)
             continue;
         }
 
-        // 異なるレーンへの接続
+        // Connection to a different lane
         if parent_lane > commit_lane {
-            // 右のレーンへの接続
-            // コミット位置から右へ横線
+            // Connection to a lane on the right
+            // Horizontal line to the right from the commit position
             for col in (commit_lane * 2 + 1)..(parent_lane * 2) {
                 if col < cells.len() {
                     let existing = cells[col];
@@ -525,20 +525,20 @@ fn build_row_cells_with_colors(
                     }
                 }
             }
-            // 終点のマーク
+            // End marker
             let end_idx = parent_lane * 2;
             if end_idx < cells.len() {
                 if was_existing {
-                    // 既存追跡: レーンが終了して合流 ╯（上へ接続）
+                    // Already tracked: lane ends and merges ╯ (connect upward)
                     cells[end_idx] = CellType::MergeLeft(parent_color);
                 } else {
-                    // 新規割り当て: レーンが継続 ╮（下へ継続）
+                    // New assignment: lane continues ╮ (continue downward)
                     cells[end_idx] = CellType::BranchLeft(parent_color);
                 }
             }
         } else {
-            // ブランチ終端: 左のレーン（メインライン）へ接続
-            // コミット位置から左へ横線
+            // Branch end: connect to the left lane (main line)
+            // Horizontal line to the left from the commit position
             for col in (parent_lane * 2 + 1)..(commit_lane * 2) {
                 if col < cells.len() {
                     let existing = cells[col];
@@ -549,15 +549,15 @@ fn build_row_cells_with_colors(
                     }
                 }
             }
-            // 始点のマーク
+            // Start marker
             let start_idx = parent_lane * 2;
             if start_idx < cells.len() {
                 let existing = cells[start_idx];
                 if let CellType::Pipe(pl) = existing {
-                    // パイプがある場合はT字分岐（├）に変更
+                    // If a pipe exists, change to T junction (├)
                     cells[start_idx] = CellType::TeeRight(pl);
                 } else if existing == CellType::Empty {
-                    // 空の場合はマージマーク（╰）
+                    // If empty, use merge mark (╰)
                     cells[start_idx] = CellType::MergeRight(commit_color);
                 }
             }
@@ -567,8 +567,8 @@ fn build_row_cells_with_colors(
     cells
 }
 
-/// フォーク接続行のセルを構築（複数ブランチが同じ親から分岐）
-/// 例: ├─┴─╯ （メインレーンから複数のブランチレーンへの接続）
+/// Build fork connector row cells (multiple branches from the same parent)
+/// Example: ├─┴─╯ (main lane connecting to multiple branch lanes)
 fn build_fork_connector_cells(
     main_lane: usize,
     main_color: usize,
@@ -580,17 +580,17 @@ fn build_fork_connector_cells(
 ) -> Vec<CellType> {
     let mut cells = vec![CellType::Empty; (max_lane + 1) * 2];
 
-    // マージするレーン番号のリスト（ソート済み）
+    // Sorted list of merging lane numbers
     let mut merging_lane_nums: Vec<usize> = merging_lanes.iter().map(|(l, _)| *l).collect();
     merging_lane_nums.sort();
 
-    // メインレーンにT字分岐を描画
+    // Draw a T junction on the main lane
     let main_cell_idx = main_lane * 2;
     if main_cell_idx < cells.len() {
         cells[main_cell_idx] = CellType::TeeRight(main_color);
     }
 
-    // アクティブなレーンに縦線を描画（メインレーンとマージレーン以外）
+    // Draw vertical lines for active lanes (except main and merging lanes)
     for (lane_idx, lane_oid) in active_lanes.iter().enumerate() {
         if let Some(oid) = lane_oid {
             if lane_idx != main_lane && !merging_lane_nums.contains(&lane_idx) {
@@ -606,12 +606,12 @@ fn build_fork_connector_cells(
         }
     }
 
-    // 最も右のマージレーン
+    // Rightmost merging lane
     let rightmost_lane = *merging_lane_nums.last().unwrap_or(&main_lane);
 
-    // マージするレーンへの接続線を描画
+    // Draw connectors to merging lanes
     for &(merge_lane, merge_color) in merging_lanes {
-        // メインレーンからマージレーンへの横線
+        // Horizontal line from main lane to merging lane
         for col in (main_lane * 2 + 1)..(merge_lane * 2) {
             if col < cells.len() {
                 let existing = cells[col];
@@ -623,14 +623,14 @@ fn build_fork_connector_cells(
             }
         }
 
-        // マージレーンの終点
+        // End of merge lane
         let end_idx = merge_lane * 2;
         if end_idx < cells.len() {
             if merge_lane == rightmost_lane {
-                // 最も右のレーンは╯
+                // Rightmost lane uses ╯
                 cells[end_idx] = CellType::MergeLeft(merge_color);
             } else {
-                // 中間のレーンは┴
+                // Middle lanes use ┴
                 cells[end_idx] = CellType::TeeUp(merge_color);
             }
         }

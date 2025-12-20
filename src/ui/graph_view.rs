@@ -1,4 +1,4 @@
-//! グラフ表示Widget
+//! Graph view widget
 
 use ratatui::{
     buffer::Buffer,
@@ -15,7 +15,7 @@ use crate::{
     graph::colors::get_color_by_index,
 };
 
-/// 文字列の表示幅を計算
+/// Calculate display width of a string
 fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
@@ -27,7 +27,7 @@ pub struct GraphViewWidget<'a> {
 impl<'a> GraphViewWidget<'a> {
     pub fn new(app: &App, width: u16) -> Self {
         let max_lane = app.graph_layout.max_lane;
-        // ボーダー分を引いた実際の幅
+        // Actual width minus borders
         let inner_width = width.saturating_sub(2) as usize;
 
         let items: Vec<ListItem> = app
@@ -46,10 +46,10 @@ impl<'a> GraphViewWidget<'a> {
     }
 }
 
-/// ブランチ名の表示を最適化
-/// - ローカルブランチと対応するorigin/xxxが一致している場合は「xxx ↔ origin」と表示
-/// - それ以外は従来通り個別に表示
-/// - グラフのカラーインデックスで太文字表示、カッコで囲む
+/// Optimize branch name display
+/// - If a local branch matches its origin/xxx, show "xxx <-> origin"
+/// - Otherwise, show each name separately
+/// - Render in bold with the graph color, wrapped in brackets
 fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: usize) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
@@ -60,7 +60,7 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: 
     let mut result: Vec<(String, Style)> = Vec::new();
     let mut processed_remotes: HashSet<String> = HashSet::new();
 
-    // ローカルブランチとリモートブランチを分離
+    // Split local and remote branches
     let local_branches: Vec<&str> = branch_names
         .iter()
         .filter(|n| !n.starts_with("origin/"))
@@ -72,10 +72,10 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: 
         .map(|s| s.as_str())
         .collect();
 
-    // スタイル: グラフのカラーインデックスで太文字
-    // メインブランチ（青）は常に青、それ以外のHEADは緑
+    // Style: bold with the graph color index
+    // Main branch (blue) stays blue; other HEADs are green
     let base_color = if color_index == crate::graph::colors::MAIN_BRANCH_COLOR {
-        get_color_by_index(color_index) // メインブランチは常に青
+        get_color_by_index(color_index) // Main branch is always blue
     } else if is_head {
         Color::Green
     } else {
@@ -83,22 +83,22 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: 
     };
     let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
 
-    // ローカルブランチを処理
+    // Handle local branches
     for local in local_branches.iter() {
         let remote_name = format!("origin/{}", local);
         let has_matching_remote = remote_branches.contains(remote_name.as_str());
 
         if has_matching_remote {
-            // ローカルとリモートが一致 → 簡潔表示
+            // Local and remote match -> compact display
             result.push((format!("[{} ↔ origin]", local), style));
             processed_remotes.insert(remote_name);
         } else {
-            // ローカルのみ
+            // Local only
             result.push((format!("[{}]", local), style));
         }
     }
 
-    // 対応するローカルがないリモートブランチを追加（グラフと同じ色で表示）
+    // Add remote branches without a local counterpart (same color as graph)
     for remote in branch_names.iter().filter(|n| n.starts_with("origin/")) {
         if !processed_remotes.contains(remote) {
             result.push((format!("[{}]", remote), style));
@@ -108,7 +108,7 @@ fn optimize_branch_display(branch_names: &[String], is_head: bool, color_index: 
     result
 }
 
-/// 文字列を指定した表示幅で切り詰める
+/// Truncate a string to the specified display width
 fn truncate_to_width(s: &str, max_width: usize) -> String {
     let mut result = String::new();
     let mut current_width = 0;
@@ -131,19 +131,19 @@ fn render_graph_line<'a>(
 ) -> Line<'a> {
     let mut spans: Vec<Span> = Vec::new();
 
-    // グラフ開始マーカー（境界線と区別するため）
+    // Graph start marker (to distinguish from borders)
     spans.push(Span::raw(" "));
     let mut left_width: usize = 1;
 
-    // セルを描画
+    // Render cells
     for cell in &node.cells {
         let (ch, color) = match cell {
             CellType::Empty => (' ', Color::Reset),
             CellType::Pipe(color_idx) => ('│', get_color_by_index(*color_idx)),
             CellType::Commit(color_idx) => {
-                // HEADは二重丸、それ以外は塗りつぶし丸
+                // HEAD uses a double circle, others use a filled circle
                 let ch = if node.is_head { '◉' } else { '●' };
-                // メインブランチ（青）は常に青、それ以外のHEADは緑
+                // Main branch (blue) stays blue; other HEADs are green
                 let color = if *color_idx == crate::graph::colors::MAIN_BRANCH_COLOR {
                     get_color_by_index(*color_idx)
                 } else if node.is_head {
@@ -159,7 +159,7 @@ fn render_graph_line<'a>(
             CellType::MergeLeft(color_idx) => ('╯', get_color_by_index(*color_idx)),
             CellType::Horizontal(color_idx) => ('─', get_color_by_index(*color_idx)),
             CellType::HorizontalPipe(_h_color_idx, p_color_idx) => {
-                // 縦線と横線が交差（縦線の色を優先）
+                // Vertical and horizontal lines cross (use pipe color)
                 ('┼', get_color_by_index(*p_color_idx))
             }
             CellType::TeeRight(color_idx) => ('├', get_color_by_index(*color_idx)),
@@ -167,7 +167,7 @@ fn render_graph_line<'a>(
             CellType::TeeUp(color_idx) => ('┴', get_color_by_index(*color_idx)),
         };
 
-        // 罫線はすべてBOLDで太く表示
+        // Draw all line glyphs in bold
         let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
 
         let ch_str = ch.to_string();
@@ -176,25 +176,25 @@ fn render_graph_line<'a>(
         left_width += ch_width;
     }
 
-    // グラフ幅を揃えるためのパディング（表示幅ベース）
+    // Padding to align graph width (display width based)
     let graph_display_width = (max_lane + 1) * 2;
-    if left_width < graph_display_width + 1 {  // +1 は開始マーカー分
+    if left_width < graph_display_width + 1 {  // +1 accounts for the start marker
         let padding = graph_display_width + 1 - left_width;
         spans.push(Span::raw(" ".repeat(padding)));
         left_width += padding;
     }
 
-    // セパレータ（グラフとコミット情報の間）
+    // Separator between graph and commit info
     spans.push(Span::raw(" "));
     left_width += 1;
 
-    // コミットがない場合（接続行のみ）は早期リターン
+    // Early return for connector-only rows
     let commit = match &node.commit {
         Some(c) => c,
         None => return Line::from(spans),
     };
 
-    // スタイル定義
+    // Style definitions
     let hash_style = Style::default().fg(Color::Yellow);
     let author_style = Style::default().fg(Color::Cyan);
     let date_style = Style::default().fg(Color::DarkGray);
@@ -204,23 +204,23 @@ fn render_graph_line<'a>(
         Style::default()
     };
 
-    // === 左寄せ部分: ブランチ名 + メッセージ ===
+    // === Left-aligned: branch names + message ===
 
-    // ブランチ名を最適化（local と origin/local が一致している場合は簡潔に表示）
+    // Optimize branch names (compact when local matches origin/local)
     let branch_display = optimize_branch_display(&node.branch_names, node.is_head, node.color_index);
 
-    // === 右寄せ部分: 日時 author hash（固定幅） ===
-    let date = commit.timestamp.format("%Y-%m-%d").to_string();  // 10文字
+    // === Right-aligned: date author hash (fixed width) ===
+    let date = commit.timestamp.format("%Y-%m-%d").to_string();  // 10 chars
     let author = truncate_to_width(&commit.author_name, 8);
-    let author_formatted = format!("{:<8}", author);  // 8文字固定
+    let author_formatted = format!("{:<8}", author);  // fixed 8 chars
     let hash = truncate_to_width(&commit.short_id, 7);
-    let hash_formatted = format!("{:<7}", hash);  // 7文字固定
+    let hash_formatted = format!("{:<7}", hash);  // fixed 7 chars
 
-    // 右寄せ部分の固定幅: " YYYY-MM-DD  author    hash   "
-    // スペース1 + 日付10 + スペース2 + author8 + スペース2 + hash7 + スペース1 = 31
+    // Fixed width for right-aligned part: " YYYY-MM-DD  author    hash   "
+    // Space1 + date10 + space2 + author8 + space2 + hash7 + space1 = 31
     const RIGHT_FIXED_WIDTH: usize = 31;
 
-    // ブランチ名を表示（カッコ付きで太文字、グラフと同じ色）
+    // Render branch labels (bold, bracketed, graph color)
     for (i, (label, style)) in branch_display.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw(" "));
@@ -234,7 +234,7 @@ fn render_graph_line<'a>(
         left_width += 1;
     }
 
-    // メッセージの最大幅を計算（利用可能な幅いっぱいまで使用）
+    // Compute max message width (use remaining space)
     let available_for_message = total_width
         .saturating_sub(left_width)
         .saturating_sub(RIGHT_FIXED_WIDTH);
@@ -243,13 +243,13 @@ fn render_graph_line<'a>(
     spans.push(Span::styled(message, msg_style));
     left_width += message_width;
 
-    // 右寄せのためのパディング（右寄せ部分が常に同じ位置から始まるように）
+    // Padding so the right-aligned block starts at a fixed column
     let padding = total_width.saturating_sub(left_width).saturating_sub(RIGHT_FIXED_WIDTH);
     if padding > 0 {
         spans.push(Span::raw(" ".repeat(padding)));
     }
 
-    // === 右寄せ部分を追加（固定幅フォーマット） ===
+    // === Append right-aligned block (fixed width) ===
     spans.push(Span::raw(" "));
     spans.push(Span::styled(date, date_style));
     spans.push(Span::raw("  "));

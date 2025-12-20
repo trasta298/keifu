@@ -1,11 +1,11 @@
-//! グラフ描画アルゴリズムのテスト
+//! Tests for the graph rendering algorithm
 
 use chrono::Local;
 use git2::Oid;
 use git_graph_tui::git::{build_graph, graph::CellType, BranchInfo, CommitInfo};
 
 fn make_oid(id: &str) -> Oid {
-    // idをハッシュに変換して40文字の16進数を生成
+    // Convert id into a 40-char hex hash
     let hash = format!("{:0>40x}", id.bytes().fold(0u128, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u128)));
     Oid::from_str(&hash[..40]).unwrap()
 }
@@ -78,7 +78,7 @@ fn test_linear_history() {
     }
 
     assert_eq!(layout.max_lane, 0);
-    // 全てのコミットがレーン0にあるべき
+    // All commits should be on lane 0
     for node in &layout.nodes {
         assert_eq!(node.lane, 0);
     }
@@ -113,16 +113,16 @@ fn test_simple_branch_merge() {
         );
     }
 
-    // コミットノードのみを抽出（接続行を除外）
+    // Extract commit nodes only (exclude connector rows)
     let commit_nodes: Vec<_> = layout.nodes.iter().filter(|n| n.commit.is_some()).collect();
 
-    // C4はレーン0にあり、C2への分岐がある
+    // C4 should be in lane 0 with a branch to C2
     assert_eq!(commit_nodes[0].lane, 0); // C4
-    // C3はレーン0
+    // C3 should be in lane 0
     assert_eq!(commit_nodes[1].lane, 0); // C3
-    // C2はレーン1（別ブランチ）
+    // C2 should be in lane 1 (separate branch)
     assert_eq!(commit_nodes[2].lane, 1); // C2
-    // C1はレーン0
+    // C1 should be in lane 0
     assert_eq!(commit_nodes[3].lane, 0); // C1
 }
 
@@ -162,19 +162,19 @@ fn test_multiple_merges() {
         );
     }
 
-    // 期待される出力:
-    // C7 lane=0 -> '○─╭ '  (マージ: C6が0、C5が1)
-    // C6 lane=0 -> '○ │ '  (mainの続き、featureが1で継続)
-    // C5 lane=1 -> '│─○ '  (feature、mainのパイプ)
-    // C4 lane=0 -> '○─╭ '  (マージ: C3が0、C2が1)
-    // C3 lane=0 -> '○ │ '  (mainの続き)
+    // Expected output:
+    // C7 lane=0 -> '○─╭ '  (merge: C6 is 0, C5 is 1)
+    // C6 lane=0 -> '○ │ '  (main continues, feature stays on 1)
+    // C5 lane=1 -> '│─○ '  (feature, main pipe)
+    // C4 lane=0 -> '○─╭ '  (merge: C3 is 0, C2 is 1)
+    // C3 lane=0 -> '○ │ '  (main continues)
     // C2 lane=1 -> '│─○ '  (develop)
     // C1 lane=0 -> '○   '  (root)
 }
 
 #[test]
 fn test_cell_structure() {
-    // シンプルなマージのセル構造を詳細に確認
+    // Inspect the cell structure of a simple merge in detail
     let commits = vec![
         make_commit("m1", vec!["a1", "b1"]), // merge
         make_commit("a1", vec!["r1"]),       // main
@@ -190,12 +190,12 @@ fn test_cell_structure() {
         println!("  {} cells: {:?}", get_short_id(node), node.cells);
     }
 
-    // m1のセル構造を確認
+    // Check the cell structure for m1
     let m1_cells = &layout.nodes[0].cells;
     println!("  m1 rendered: '{}'", render_cells(m1_cells));
 
-    // m1はレーン0でコミット、レーン1への分岐線があるはず
-    // CellType内の値はカラーインデックスなので、セルタイプのみを検証
+    // m1 is a commit on lane 0 with a branch line to lane 1
+    // CellType stores color indices, so only validate the cell type
     assert!(
         matches!(m1_cells.get(0), Some(CellType::Commit(_))),
         "m1 cell[0] should be Commit, got {:?}",
@@ -205,7 +205,7 @@ fn test_cell_structure() {
 
 #[test]
 fn test_octopus_merge() {
-    // オクトパスマージ（3つ以上の親）
+    // Octopus merge (3+ parents)
     // M -> A, B, C
     // A -> R
     // B -> R
@@ -239,7 +239,7 @@ fn test_octopus_merge() {
 
 #[test]
 fn test_parallel_branches() {
-    // 並行して進むブランチ
+    // Parallel branches
     // M2 (merge) -> A2, B2
     // A2 -> A1
     // B2 -> B1
@@ -275,7 +275,7 @@ fn test_parallel_branches() {
 
 #[test]
 fn test_many_active_lanes() {
-    // 複数のレーンが同時にアクティブ
+    // Multiple lanes active at once
     // HEAD -> M
     // M (merge) -> A, B, C, D
     // A -> R
@@ -311,6 +311,6 @@ fn test_many_active_lanes() {
         );
     }
 
-    // max_laneは少なくとも3（4つのブランチがマージされる）
+    // max_lane should be at least 3 (4 branches merge)
     assert!(layout.max_lane >= 3, "Expected max_lane >= 3, got {}", layout.max_lane);
 }

@@ -1,91 +1,100 @@
 # git-graph-tui
 
-CLIでGitグラフを表示するTUIツール。VSCode Git Graph拡張機能のようなブランチツリー表示をターミナルで実現します。
+[日本語版はこちら](README_JA.md)
 
-## 機能
+git-graph-tui is a terminal UI tool that visualizes Git commit graphs. It shows a colored commit graph, commit details, and a summary of changed files, and lets you perform basic branch operations.
 
-- **グラフ表示**: Unicode Box Drawing文字によるリッチなブランチグラフ
-- **ブランチ操作**: checkout、ブランチ作成・削除、merge、rebase
-- **インタラクティブ**: vi風キーバインドでのナビゲーション
-- **カラー表示**: ブランチごとに異なる色で識別
+## Features
 
-## スクリーンショット
+- Unicode commit graph with per-branch colors
+- Commit list with branch labels, date, author, short hash, and message
+- Commit detail panel with full message and changed file stats (+/-)
+- Git operations: checkout, create/delete branch, merge, rebase
+- Text output mode for piping (`--text`)
 
-```
-┌───────────────┬─────────────────────────────────────────────────────┐
-│ Branches      │  Commits                                            │
-│               │                                                     │
-│  ● main      │  ●   d2f1ac7 trasta     12-20 Add develop file      │
-│  ○ develop   │  │ ● 3f1824e trasta     12-20 Add test file         │
-│  ○ feature/x │  ├─╯                                                 │
-│               │  ●   2600310 trasta     12-20 Add .gitignore        │
-│               │  ●   f0b7da0 trasta     12-20 Initial commit        │
-└───────────────┴─────────────────────────────────────────────────────┘
-```
+## Requirements
 
-## インストール
+- Run inside a Git repository (auto-discovery from current directory)
+- A terminal with Unicode line drawing support and color
+- Rust toolchain (for building from source)
+
+## Installation
 
 ```bash
 cargo install --path .
 ```
 
-または
+Or:
 
 ```bash
 cargo build --release
 ./target/release/git-graph-tui
 ```
 
-## 使い方
+## Usage
 
-Gitリポジトリ内で実行:
+Run inside a Git repository:
 
 ```bash
 git-graph-tui
 ```
 
-## キーバインド
+Text output (non-interactive):
 
-### ナビゲーション
+```bash
+git-graph-tui --text
+```
 
-| キー | 説明 |
-|------|------|
-| `j` / `↓` | 下へ移動 |
-| `k` / `↑` | 上へ移動 |
-| `h` / `←` | ブランチリストへフォーカス |
-| `l` / `→` | グラフへフォーカス |
-| `Ctrl+d` | 半ページ下スクロール |
-| `Ctrl+u` | 半ページ上スクロール |
-| `g` / `Home` | 先頭へ移動 |
-| `G` / `End` | 末尾へ移動 |
-| `Tab` | フォーカス切替 |
+Example `--text` output:
 
-### Git操作
+```
+ ○──● 3a1b2c3 Fix foo [main]
+ │
+ ○──● 9d8e7f6 Add bar
+```
 
-| キー | 説明 |
-|------|------|
-| `Enter` | 選択中のブランチ/コミットをcheckout |
-| `b` | 新規ブランチ作成 |
-| `d` | ブランチ削除 |
-| `m` | 選択ブランチをマージ |
-| `r` | 選択ブランチにリベース |
+## Keybindings
 
-### その他
+### Navigation
 
-| キー | 説明 |
-|------|------|
-| `R` | リポジトリ情報を更新 |
-| `?` | ヘルプ表示 |
-| `q` / `Esc` | 終了 |
+| Key | Action |
+| --- | --- |
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `]` / `Tab` | Jump to next commit that has branch labels |
+| `[` / `Shift+Tab` | Jump to previous commit that has branch labels |
+| `Ctrl+d` | Page down |
+| `Ctrl+u` | Page up |
+| `g` / `Home` | Go to top |
+| `G` / `End` | Go to bottom |
 
-## 依存クレート
+### Git operations
 
-- [ratatui](https://github.com/ratatui/ratatui) - TUIフレームワーク
-- [crossterm](https://github.com/crossterm-rs/crossterm) - クロスプラットフォームターミナル
-- [git2](https://github.com/rust-lang/git2-rs) - libgit2バインディング
-- [clap](https://github.com/clap-rs/clap) - CLI引数パーサー
-- [chrono](https://github.com/chronotope/chrono) - 日時処理
+| Key | Action |
+| --- | --- |
+| `Enter` | Checkout selected branch/commit |
+| `b` | Create branch at selected commit |
+| `d` | Delete branch (local, non-HEAD) |
+| `m` | Merge selected branch into current |
+| `r` | Rebase current branch onto selected |
 
-## ライセンス
+### Other
+
+| Key | Action |
+| --- | --- |
+| `R` | Refresh repository data |
+| `?` | Toggle help |
+| `q` / `Esc` | Quit |
+
+## Notes and limitations
+
+- The TUI loads up to 500 commits across all branches; `--text` prints the latest 50.
+- Merge commits are diffed against the first parent; the initial commit is diffed against an empty tree.
+- Changed files are capped at 50 and binary files are skipped.
+- Checking out `origin/xxx` creates or updates a local branch and sets its upstream. If the local branch exists but points to a different commit, it is force-updated to match the remote.
+- Merge/rebase can fail on conflicts; resolve them manually in Git and refresh the view.
+- Remote branches are displayed, but merge/rebase/delete operations only work with local branches.
+
+## License
 
 MIT

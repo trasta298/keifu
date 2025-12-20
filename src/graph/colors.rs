@@ -1,9 +1,9 @@
-//! ブランチ色管理
+//! Branch color management
 
 use ratatui::style::Color;
 use std::collections::{HashSet, VecDeque};
 
-/// レーンごとの色パレット（11色ローテーション）
+/// Per-lane color palette (11-color rotation)
 pub const LANE_COLORS: [Color; 11] = [
     Color::Cyan,
     Color::Green,
@@ -14,45 +14,45 @@ pub const LANE_COLORS: [Color; 11] = [
     Color::LightGreen,
     Color::LightMagenta,
     Color::LightYellow,
-    Color::LightBlue,  // メインブランチ用
+    Color::LightBlue,  // Main branch
     Color::LightRed,
 ];
 
-/// カラーインデックスから色を取得
+/// Get a color from a color index
 pub fn get_color_by_index(color_index: usize) -> Color {
     LANE_COLORS[color_index % LANE_COLORS.len()]
 }
 
-/// レーン番号から色を取得（後方互換性のため残す）
+/// Get a color from a lane number (kept for backward compatibility)
 pub fn get_lane_color(lane: usize) -> Color {
     get_color_by_index(lane)
 }
 
-/// メインブランチの色（ライトブルー）
+/// Main branch color (light blue)
 pub const MAIN_BRANCH_COLOR: usize = 9; // Color::LightBlue
 
-/// レーン再利用時に異なる色を割り当てるための色管理
+/// Color assignment to vary colors when lanes are reused
 #[derive(Debug)]
 pub struct ColorAssigner {
-    /// 各レーンに割り当てられた現在のカラーインデックス
+    /// Current color index assigned to each lane
     lane_colors: Vec<Option<usize>>,
-    /// 各レーンで最後に使用されたカラーインデックス（再利用時の参照用）
+    /// Last color index used per lane (for reuse)
     lane_last_color: Vec<usize>,
-    /// 次に試すグローバルカラーインデックス
+    /// Next global color index to try
     next_color_index: usize,
-    /// 予約された色（メインブランチ専用、他のブランチで使用不可）
+    /// Reserved colors (main branch only, unavailable to others)
     reserved_colors: HashSet<usize>,
-    /// 最近の色割り当て履歴（行番号, レーン番号, カラーインデックス）
+    /// Recent color assignment history (row, lane, color index)
     recent_assignments: VecDeque<(usize, usize, usize)>,
-    /// 履歴を保持する最大行数
+    /// Max rows to keep in history
     history_window: usize,
-    /// 現在の行番号
+    /// Current row number
     current_row: usize,
-    /// 現在の行でフォーク兄弟として割り当てられた色
+    /// Colors assigned to fork siblings on the current row
     current_fork_colors: HashSet<usize>,
-    /// 色の使用回数カウンタ（均等分配のため）
+    /// Color usage counters (for balancing)
     color_usage_count: [usize; 11],
-    /// メインブランチのレーン（色を固定）
+    /// Lane of the main branch (fixed color)
     main_lane: Option<usize>,
 }
 
@@ -72,22 +72,22 @@ impl ColorAssigner {
         }
     }
 
-    /// 指定レーンがメインブランチかどうか
+    /// Whether the lane is the main branch
     pub fn is_main_lane(&self, lane: usize) -> bool {
         self.main_lane == Some(lane)
     }
 
-    /// メインブランチの色を取得
+    /// Get the main branch color
     pub fn get_main_color(&self) -> usize {
         MAIN_BRANCH_COLOR
     }
 
-    /// 色を予約（メインブランチ専用にする）
+    /// Reserve a color (main branch only)
     pub fn reserve_color(&mut self, color_index: usize) {
         self.reserved_colors.insert(color_index);
     }
 
-    /// 指定レーンの容量を確保
+    /// Ensure capacity for the lane
     fn ensure_capacity(&mut self, lane: usize) {
         while self.lane_colors.len() <= lane {
             self.lane_colors.push(None);
@@ -95,25 +95,25 @@ impl ColorAssigner {
         }
     }
 
-    /// レーンのカラーインデックスを取得（アクティブな場合）
+    /// Get the lane color index (if active)
     pub fn get_lane_color_index(&self, lane: usize) -> Option<usize> {
         self.lane_colors.get(lane).and_then(|c| *c)
     }
 
-    /// 新しい行の処理を開始（フォーク兄弟追跡をリセット）
+    /// Start a new row (reset fork sibling tracking)
     pub fn advance_row(&mut self) {
         self.current_row += 1;
         self.current_fork_colors.clear();
     }
 
-    /// フォーク処理を開始（同じコミットから複数ブランチが分岐）
+    /// Begin a fork (multiple branches from the same commit)
     pub fn begin_fork(&mut self) {
         self.current_fork_colors.clear();
     }
 
-    /// 新しいブランチに色を割り当て（ペナルティベースのアルゴリズム）
-    /// is_fork_sibling: trueの場合はフォーク兄弟として扱い、同一フォーク内での色重複を避ける
-    /// use_reserved: trueの場合は予約色も使用可能（メインブランチ用）
+    /// Assign a color to a new branch (penalty-based algorithm)
+    /// is_fork_sibling: true treats it as a fork sibling to avoid duplicate colors within a fork
+    /// use_reserved: true allows reserved colors (for the main branch)
     fn assign_color_advanced(
         &mut self,
         lane: usize,
@@ -122,42 +122,42 @@ impl ColorAssigner {
     ) -> usize {
         self.ensure_capacity(lane);
 
-        // 各色のペナルティを計算
+        // Compute penalties for each color
         let mut color_penalties: [f64; 11] = [0.0; 11];
 
-        // 1. このレーンの前回の色（高ペナルティ）
+        // 1. Last color on this lane (high penalty)
         let last_color = self.lane_last_color[lane];
         color_penalties[last_color] += 10.0;
 
-        // 2. 全アクティブレーンの色（距離ベースの重み付き）
+        // 2. Colors on all active lanes (distance-weighted)
         for (other_lane, color_opt) in self.lane_colors.iter().enumerate() {
             if let Some(color) = color_opt {
                 let lane_distance = (lane as isize - other_lane as isize).unsigned_abs() as f64;
-                // 近いレーンほど高いペナルティ
+                // Closer lanes get higher penalty
                 let weight = 8.0 / (lane_distance + 1.0);
                 color_penalties[*color] += weight;
             }
         }
 
-        // 3. 最近の色割り当て履歴（垂直方向の重複回避）
+        // 3. Recent assignment history (avoid vertical repeats)
         for &(row, hist_lane, color) in &self.recent_assignments {
             let row_distance = self.current_row.saturating_sub(row) as f64;
             let lane_distance = (lane as isize - hist_lane as isize).unsigned_abs() as f64;
 
-            // 近い行・近いレーンほど高いペナルティ
+            // Closer rows and lanes get higher penalty
             let row_weight = 4.0 / (row_distance + 1.0);
             let lane_weight = 2.0 / (lane_distance + 1.0);
             color_penalties[color] += row_weight * lane_weight;
         }
 
-        // 4. フォーク兄弟の色（最高ペナルティ - 同じフォークで同じ色は避ける）
+        // 4. Fork sibling colors (highest penalty to avoid duplicates in a fork)
         if is_fork_sibling {
             for &color in &self.current_fork_colors {
                 color_penalties[color] += 100.0;
             }
         }
 
-        // 5. 色の使用頻度（均等分配のため）
+        // 5. Color usage frequency (balance distribution)
         let max_usage = *self.color_usage_count.iter().max().unwrap_or(&0) as f64;
         if max_usage > 0.0 {
             for (color, &count) in self.color_usage_count.iter().enumerate() {
@@ -165,14 +165,14 @@ impl ColorAssigner {
             }
         }
 
-        // 最適な色を選択（ペナルティが最小の色）
+        // Choose the best color (lowest penalty)
         let mut best_color = self.next_color_index;
         let mut best_penalty = f64::MAX;
 
         for candidate in 0..LANE_COLORS.len() {
             let color_idx = (self.next_color_index + candidate) % LANE_COLORS.len();
 
-            // 予約色をスキップ（use_reserved=falseの場合）
+            // Skip reserved colors when use_reserved is false
             if !use_reserved && self.reserved_colors.contains(&color_idx) {
                 continue;
             }
@@ -184,22 +184,22 @@ impl ColorAssigner {
             }
         }
 
-        // 状態を更新
+        // Update state
         self.lane_colors[lane] = Some(best_color);
         self.lane_last_color[lane] = best_color;
         self.next_color_index = (best_color + 1) % LANE_COLORS.len();
 
-        // 履歴に追加
+        // Add to history
         self.recent_assignments
             .push_back((self.current_row, lane, best_color));
         while self.recent_assignments.len() > self.history_window {
             self.recent_assignments.pop_front();
         }
 
-        // 使用回数をインクリメント
+        // Increment usage count
         self.color_usage_count[best_color] += 1;
 
-        // フォーク兄弟として追跡
+        // Track as fork sibling
         if is_fork_sibling {
             self.current_fork_colors.insert(best_color);
         }
@@ -207,17 +207,17 @@ impl ColorAssigner {
         best_color
     }
 
-    /// 新しいブランチに色を割り当て（予約色は使用しない）
+    /// Assign a color to a new branch (do not use reserved colors)
     pub fn assign_color(&mut self, lane: usize) -> usize {
         self.assign_color_advanced(lane, false, false)
     }
 
-    /// フォーク兄弟として色を割り当て（同じフォーク内での色重複を避ける）
+    /// Assign a color as a fork sibling (avoid duplicates within a fork)
     pub fn assign_fork_sibling_color(&mut self, lane: usize) -> usize {
         self.assign_color_advanced(lane, true, false)
     }
 
-    /// メインブランチに色を割り当て（青を固定で使用し、予約する）
+    /// Assign a color to the main branch (fixed blue, reserve it)
     pub fn assign_main_color(&mut self, lane: usize) -> usize {
         self.ensure_capacity(lane);
         let color = MAIN_BRANCH_COLOR;
@@ -229,8 +229,8 @@ impl ColorAssigner {
         color
     }
 
-    /// 既存のレーンを継続使用
-    /// メインレーンの場合は常に青を返す
+    /// Continue using an existing lane
+    /// Always return blue for the main lane
     pub fn continue_lane(&mut self, lane: usize) -> usize {
         if self.main_lane == Some(lane) {
             return MAIN_BRANCH_COLOR;
@@ -239,8 +239,8 @@ impl ColorAssigner {
         self.lane_colors[lane].unwrap_or_else(|| self.assign_color(lane))
     }
 
-    /// レーンを解放（ブランチ終了時）
-    /// メインレーンの色は解放しない
+    /// Release a lane (when a branch ends)
+    /// Do not release the main lane color
     pub fn release_lane(&mut self, lane: usize) {
         if lane < self.lane_colors.len() && self.main_lane != Some(lane) {
             self.lane_colors[lane] = None;

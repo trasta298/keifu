@@ -1,4 +1,4 @@
-//! ステータスバーWidget
+//! Status bar widget
 
 use ratatui::{
     buffer::Buffer,
@@ -50,7 +50,7 @@ impl<'a> Widget for StatusBar<'a> {
 
         let mut spans: Vec<Span> = Vec::new();
 
-        // リポジトリ名（フォルダ名）を左端に表示
+        // Show the repository name (folder name) on the left
         let repo_name = std::path::Path::new(self.repo_path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -58,7 +58,7 @@ impl<'a> Widget for StatusBar<'a> {
         spans.push(Span::styled(format!(" {} ", repo_name), repo_style));
         spans.push(Span::raw(" "));
 
-        // HEADブランチ
+        // HEAD branch
         if let Some(head) = self.head_name {
             spans.push(Span::styled(
                 format!(" {} ", head),
@@ -67,7 +67,7 @@ impl<'a> Widget for StatusBar<'a> {
             spans.push(Span::raw(" "));
         }
 
-        // キーヒント（モードに応じて変更）
+        // Key hints (vary by mode)
         match self.mode {
             AppMode::Normal => {
                 spans.push(Span::styled(" j/k ", key_style));
@@ -102,7 +102,7 @@ impl<'a> Widget for StatusBar<'a> {
                 spans.push(Span::styled("no", desc_style));
             }
             AppMode::Error { .. } => {
-                // エラーモードでは、エラーメッセージを表示してキーバインドを非表示
+                // In error mode, show the message and hide key hints
                 let error_style = Style::default()
                     .fg(Color::White)
                     .bg(Color::Red)
@@ -119,7 +119,7 @@ impl<'a> Widget for StatusBar<'a> {
         let line = Line::from(spans);
         buf.set_line(area.x, area.y, &line, area.width);
 
-        // 右端にモード表示
+        // Show the mode on the right
         let mode_text = match self.mode {
             AppMode::Normal => " NORMAL ",
             AppMode::Help => " HELP ",

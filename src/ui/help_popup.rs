@@ -1,4 +1,4 @@
-//! ヘルプポップアップWidget
+//! Help popup widget
 
 use ratatui::{
     buffer::Buffer,
@@ -12,7 +12,7 @@ pub struct HelpPopup;
 
 impl Widget for HelpPopup {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // 背景をクリア
+        // Clear the background
         Clear.render(area, buf);
 
         let key_style = Style::default()

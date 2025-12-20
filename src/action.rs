@@ -1,8 +1,8 @@
-//! ユーザーアクションの定義
+//! User action definitions
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    // ナビゲーション
+    // Navigation
     MoveUp,
     MoveDown,
     PageUp,
@@ -12,7 +12,7 @@ pub enum Action {
     NextBranch,
     PrevBranch,
 
-    // Git操作
+    // Git operations
     Checkout,
     CreateBranch,
     DeleteBranch,
@@ -25,7 +25,7 @@ pub enum Action {
     Refresh,
     Quit,
 
-    // ダイアログ
+    // Dialogs
     Confirm,
     Cancel,
     InputChar(char),

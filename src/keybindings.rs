@@ -1,4 +1,4 @@
-//! キーバインド定義
+//! Keybindings
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -17,7 +17,7 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
 
 fn map_normal_mode(key: KeyEvent) -> Option<Action> {
     match (key.modifiers, key.code) {
-        // 移動
+        // Movement
         (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
             Some(Action::MoveDown)
         }
@@ -25,11 +25,11 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::MoveUp)
         }
 
-        // ページスクロール
+        // Page scroll
         (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::PageDown),
         (KeyModifiers::CONTROL, KeyCode::Char('u')) => Some(Action::PageUp),
 
-        // 先頭/末尾
+        // Top/bottom
         (KeyModifiers::NONE, KeyCode::Char('g')) | (KeyModifiers::NONE, KeyCode::Home) => {
             Some(Action::GoToTop)
         }
@@ -37,7 +37,7 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::GoToBottom)
         }
 
-        // ブランチ間ジャンプ
+        // Branch jump
         (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {
             Some(Action::NextBranch)
         }
@@ -45,7 +45,7 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::PrevBranch)
         }
 
-        // Git操作
+        // Git operations
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::Checkout),
         (KeyModifiers::NONE, KeyCode::Char('b')) => Some(Action::CreateBranch),
         (KeyModifiers::NONE, KeyCode::Char('d')) => Some(Action::DeleteBranch),

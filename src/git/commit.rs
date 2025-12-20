@@ -1,4 +1,4 @@
-//! コミット情報の構造体
+//! Commit info structure
 
 use chrono::{DateTime, Local, TimeZone};
 use git2::Oid;

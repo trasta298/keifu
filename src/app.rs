@@ -1,4 +1,4 @@
-//! アプリケーション状態管理
+//! Application state management
 
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-/// アプリケーションモード
+/// Application modes
 #[derive(Debug, Clone)]
 pub enum AppMode {
     Normal,
@@ -37,14 +37,14 @@ pub enum AppMode {
     },
 }
 
-/// 入力アクションの種類
+/// Input action kinds
 #[derive(Debug, Clone)]
 pub enum InputAction {
     CreateBranch,
     Search,
 }
 
-/// 確認アクションの種類
+/// Confirmation action kinds
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
     DeleteBranch(String),
@@ -52,40 +52,40 @@ pub enum ConfirmAction {
     Rebase(String),
 }
 
-/// 非同期diff計算の結果
+/// Result of async diff computation
 struct DiffResult {
     oid: Oid,
     diff: Option<CommitDiffInfo>,
 }
 
-/// アプリケーション状態
+/// Application state
 pub struct App {
     pub mode: AppMode,
     pub repo: GitRepository,
     pub repo_path: String,
     pub head_name: Option<String>,
 
-    // データ
+    // Data
     pub commits: Vec<CommitInfo>,
     pub branches: Vec<BranchInfo>,
     pub graph_layout: GraphLayout,
 
-    // UI状態
+    // UI state
     pub graph_list_state: ListState,
 
-    // diffキャッシュ（非同期ロード）
+    // Diff cache (async load)
     diff_cache: Option<CommitDiffInfo>,
     diff_cache_oid: Option<Oid>,
     diff_loading_oid: Option<Oid>,
     diff_receiver: Option<Receiver<DiffResult>>,
 
-    // フラグ
+    // Flags
     pub should_quit: bool,
     pub message: Option<String>,
 }
 
 impl App {
-    /// 新しいアプリケーションを作成
+    /// Create a new application
     pub fn new() -> Result<Self> {
         let repo = GitRepository::discover()?;
         let repo_path = repo.path.clone();
@@ -116,20 +116,20 @@ impl App {
         })
     }
 
-    /// リポジトリ情報を更新
+    /// Refresh repository data
     pub fn refresh(&mut self) -> Result<()> {
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
         self.graph_layout = build_graph(&self.commits, &self.branches);
         self.head_name = self.repo.head_name();
 
-        // キャッシュをクリア
+        // Clear cache
         self.diff_cache = None;
         self.diff_cache_oid = None;
         self.diff_loading_oid = None;
         self.diff_receiver = None;
 
-        // 選択位置を調整
+        // Clamp the selection
         let max_commit = self.graph_layout.nodes.len().saturating_sub(1);
         if let Some(selected) = self.graph_list_state.selected() {
             if selected > max_commit {
@@ -140,9 +140,9 @@ impl App {
         Ok(())
     }
 
-    /// 選択中コミットのdiff情報を更新（非同期）
+    /// Update diff info for the selected commit (async)
     pub fn update_diff_cache(&mut self) {
-        // 完了した結果があれば取り込む
+        // Pull in completed results, if any
         if let Some(ref receiver) = self.diff_receiver {
             if let Ok(result) = receiver.try_recv() {
                 self.diff_cache = result.diff;
@@ -163,17 +163,17 @@ impl App {
             return;
         };
 
-        // キャッシュが有効なら何もしない
+        // Do nothing if the cache is valid
         if self.diff_cache_oid == Some(oid) {
             return;
         }
 
-        // 既に読み込み中なら何もしない
+        // Do nothing if already loading
         if self.diff_loading_oid == Some(oid) {
             return;
         }
 
-        // バックグラウンドでdiffを計算
+        // Compute diff in the background
         let (tx, rx) = mpsc::channel();
         let repo_path = self.repo_path.clone();
 
@@ -189,17 +189,17 @@ impl App {
         });
     }
 
-    /// キャッシュされたdiff情報を取得
+    /// Get cached diff info
     pub fn cached_diff(&self) -> Option<&CommitDiffInfo> {
         self.diff_cache.as_ref()
     }
 
-    /// diffが読み込み中かどうか
+    /// Whether diff is currently loading
     pub fn is_diff_loading(&self) -> bool {
         self.diff_loading_oid.is_some()
     }
 
-    /// アクションを処理
+    /// Handle an action
     pub fn handle_action(&mut self, action: Action) -> Result<()> {
         match &self.mode {
             AppMode::Normal => self.handle_normal_action(action)?,
@@ -211,7 +211,7 @@ impl App {
         Ok(())
     }
 
-    /// エラーを表示
+    /// Show an error
     pub fn show_error(&mut self, message: String) {
         self.mode = AppMode::Error { message };
     }
@@ -303,7 +303,7 @@ impl App {
     }
 
     fn handle_error_action(&mut self, action: Action) {
-        // 任意のキーでエラーを閉じる
+        // Close the error on any key
         if matches!(action, Action::Quit | Action::Cancel | Action::Confirm) {
             self.mode = AppMode::Normal;
         }
@@ -331,7 +331,7 @@ impl App {
                         }
                     }
                     InputAction::Search => {
-                        // TODO: 検索機能
+                        // TODO: Search feature
                     }
                 }
                 self.mode = AppMode::Normal;
@@ -406,12 +406,12 @@ impl App {
         self.graph_list_state.select(Some(max));
     }
 
-    /// 次のブランチがあるコミットへジャンプ
+    /// Jump to the next commit that has a branch
     fn jump_to_next_branch(&mut self) {
         let current = self.graph_list_state.selected().unwrap_or(0);
         let nodes = &self.graph_layout.nodes;
 
-        // 現在位置より後で、ブランチ名を持つノードを探す
+        // Find the next node after the current position that has a branch name
         if let Some((i, _)) = nodes
             .iter()
             .enumerate()
@@ -422,12 +422,12 @@ impl App {
         }
     }
 
-    /// 前のブランチがあるコミットへジャンプ
+    /// Jump to the previous commit that has a branch
     fn jump_to_prev_branch(&mut self) {
         let current = self.graph_list_state.selected().unwrap_or(0);
         let nodes = &self.graph_layout.nodes;
 
-        // 現在位置より前で、ブランチ名を持つノードを探す（逆順）
+        // Search backward for a node before the current position that has a branch name
         if let Some((i, _)) = nodes
             .iter()
             .enumerate()
@@ -439,7 +439,7 @@ impl App {
         }
     }
 
-    /// 現在選択中のコミットにあるブランチを取得
+    /// Get the branch associated with the selected commit
     fn selected_branch(&self) -> Option<&BranchInfo> {
         let node = self.selected_commit_node()?;
         let branch_name = node.branch_names.first()?;
@@ -454,10 +454,10 @@ impl App {
 
     fn do_checkout(&mut self) -> Result<()> {
         if let Some(node) = self.selected_commit_node() {
-            // ブランチがあればブランチをチェックアウト、なければコミットをチェックアウト
+            // Checkout a branch if present, otherwise checkout the commit
             if let Some(branch_name) = node.branch_names.first() {
                 if branch_name.starts_with("origin/") {
-                    // リモートブランチの場合、ローカルブランチを作成してチェックアウト
+                    // For remote branches, create a local branch and check it out
                     checkout_remote_branch(&self.repo.repo, branch_name)?;
                 } else {
                     checkout_branch(&self.repo.repo, branch_name)?;

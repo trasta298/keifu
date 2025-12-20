@@ -1,4 +1,4 @@
-//! 入力・確認ダイアログWidget
+//! Input and confirmation dialog widgets
 
 use ratatui::{
     buffer::Buffer,
@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-/// 入力ダイアログ
+/// Input dialog
 pub struct InputDialog<'a> {
     title: &'a str,
     input: &'a str,
@@ -53,7 +53,7 @@ impl<'a> Widget for InputDialog<'a> {
     }
 }
 
-/// 確認ダイアログ
+/// Confirmation dialog
 pub struct ConfirmDialog<'a> {
     message: &'a str,
 }

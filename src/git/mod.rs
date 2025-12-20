@@ -1,4 +1,4 @@
-//! Gitレイヤー
+//! Git layer
 
 pub mod branch;
 pub mod commit;

@@ -1,9 +1,9 @@
-//! Git操作（checkout, merge, rebase, ブランチ操作）
+//! Git operations (checkout, merge, rebase, branch operations)
 
 use anyhow::{bail, Context, Result};
 use git2::{BranchType, Oid, Repository};
 
-/// ブランチをチェックアウト
+/// Checkout a branch
 pub fn checkout_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
@@ -19,7 +19,7 @@ pub fn checkout_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// コミットをチェックアウト（detached HEAD）
+/// Checkout a commit (detached HEAD)
 pub fn checkout_commit(repo: &Repository, oid: Oid) -> Result<()> {
     let commit = repo
         .find_commit(oid)
@@ -32,14 +32,14 @@ pub fn checkout_commit(repo: &Repository, oid: Oid) -> Result<()> {
     Ok(())
 }
 
-/// リモートブランチをチェックアウト（ローカルブランチを作成して追跡）
+/// Checkout a remote branch (create and track a local branch)
 pub fn checkout_remote_branch(repo: &Repository, remote_branch: &str) -> Result<()> {
-    // "origin/branch-name" から "branch-name" を抽出
+    // Extract "branch-name" from "origin/branch-name"
     let local_name = remote_branch
         .strip_prefix("origin/")
         .context("Invalid remote branch format")?;
 
-    // リモートブランチを取得
+    // Look up the remote branch
     let remote_ref = repo
         .find_branch(remote_branch, BranchType::Remote)
         .context(format!("Remote branch '{}' not found", remote_branch))?;
@@ -48,41 +48,41 @@ pub fn checkout_remote_branch(repo: &Repository, remote_branch: &str) -> Result<
     let remote_oid = remote_commit.id();
     let tree = remote_commit.tree()?;
 
-    // 同名のローカルブランチが既に存在するか確認
+    // Check if a local branch with the same name exists
     if let Ok(local_branch) = repo.find_branch(local_name, BranchType::Local) {
-        // 両方とも peel_to_commit() を使ってOIDを取得（確実な比較のため）
+        // Get OIDs via peel_to_commit() for a reliable comparison
         let local_commit = local_branch.get().peel_to_commit()?;
         let local_oid = local_commit.id();
         if local_oid == remote_oid {
-            // ローカルとリモートが同じコミットを指している → ローカルブランチをチェックアウト
+            // Local and remote point to the same commit -> checkout local branch
             return checkout_branch(repo, local_name);
         } else {
-            // 異なるコミットを指している → ローカルブランチを更新してチェックアウト
-            // git checkout -B local_name origin/xxx と同等
-            drop(local_branch); // ブランチへの参照を解放
-            repo.branch(local_name, &remote_commit, true)?; // force=true で上書き
+            // Pointing to different commits -> update local branch and checkout
+            // Equivalent to: git checkout -B local_name origin/xxx
+            drop(local_branch); // Release the branch reference
+            repo.branch(local_name, &remote_commit, true)?; // Overwrite with force=true
             repo.checkout_tree(tree.as_object(), None)?;
             repo.set_head(&format!("refs/heads/{}", local_name))?;
             return Ok(());
         }
     }
 
-    // ローカルブランチが存在しない → 新規作成して追跡
+    // No local branch -> create and track
     let mut local_branch = repo
         .branch(local_name, &remote_commit, false)
         .context(format!("Failed to create local branch '{}'", local_name))?;
 
-    // アップストリームを設定
+    // Set upstream
     local_branch.set_upstream(Some(remote_branch))?;
 
-    // チェックアウト
+    // Checkout
     repo.checkout_tree(tree.as_object(), None)?;
     repo.set_head(&format!("refs/heads/{}", local_name))?;
 
     Ok(())
 }
 
-/// 新しいブランチを作成
+/// Create a new branch
 pub fn create_branch(repo: &Repository, branch_name: &str, from_oid: Oid) -> Result<()> {
     let commit = repo
         .find_commit(from_oid)
@@ -94,7 +94,7 @@ pub fn create_branch(repo: &Repository, branch_name: &str, from_oid: Oid) -> Res
     Ok(())
 }
 
-/// ブランチを削除
+/// Delete a branch
 pub fn delete_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let mut branch = repo
         .find_branch(branch_name, BranchType::Local)
@@ -108,7 +108,7 @@ pub fn delete_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// マージを実行
+/// Perform a merge
 pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
@@ -124,7 +124,7 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     }
 
     if analysis.is_fast_forward() {
-        // Fast-forward マージ
+        // Fast-forward merge
         let target_oid = reference.target().unwrap();
         let target_commit = repo.find_commit(target_oid)?;
         let tree = target_commit.tree()?;
@@ -138,14 +138,14 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     }
 
     if analysis.is_normal() {
-        // 通常のマージ
+        // Normal merge
         repo.merge(&[&annotated_commit], None, None)?;
 
         if repo.index()?.has_conflicts() {
             bail!("Merge conflict occurred. Please resolve manually.");
         }
 
-        // マージコミットを作成
+        // Create a merge commit
         let signature = repo.signature()?;
         let head = repo.head()?;
         let head_commit = head.peel_to_commit()?;
@@ -168,7 +168,7 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// リベースを実行（シンプルな実装）
+/// Perform a rebase (simple implementation)
 pub fn rebase_branch(repo: &Repository, onto_branch: &str) -> Result<()> {
     let onto = repo
         .find_branch(onto_branch, BranchType::Local)
