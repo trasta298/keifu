@@ -57,10 +57,20 @@ pub fn checkout_remote_branch(repo: &Repository, remote_branch: &str) -> Result<
         } else {
             // Pointing to different commits -> update local branch and checkout
             // Equivalent to: git checkout -B local_name origin/xxx
+            let is_current_branch = local_branch.is_head();
             drop(local_branch); // Release the branch reference
-            repo.branch(local_name, &remote_commit, true)?; // Overwrite with force=true
-            repo.checkout_tree(tree.as_object(), None)?;
-            repo.set_head(&format!("refs/heads/{}", local_name))?;
+
+            let refname = format!("refs/heads/{}", local_name);
+            if is_current_branch {
+                // Cannot force update current branch with repo.branch()
+                // Update the reference directly after checkout
+                repo.checkout_tree(tree.as_object(), None)?;
+                repo.reference(&refname, remote_oid, true, "Update to remote")?;
+            } else {
+                repo.branch(local_name, &remote_commit, true)?; // Overwrite with force=true
+                repo.checkout_tree(tree.as_object(), None)?;
+                repo.set_head(&refname)?;
+            }
             return Ok(());
         }
     }
