@@ -11,7 +11,7 @@ keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit grap
 - Unicode commit graph with per-branch colors
 - Commit list with branch labels, date, author, short hash, and message
 - Commit detail panel with full message and changed file stats (+/-)
-- Git operations: checkout, create/delete branch
+- Git operations: checkout, create/delete branch, fetch
 
 ## Requirements
 
@@ -70,6 +70,7 @@ keifu
 | `Enter` | Checkout selected branch/commit |
 | `b` | Create branch at selected commit |
 | `d` | Delete branch (local, non-HEAD) |
+| `f` | Fetch from origin |
 
 ### Other
 
