@@ -15,7 +15,7 @@ use crate::{
         graph::GraphLayout,
         operations::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
-            merge_branch, rebase_branch,
+            fetch_origin, merge_branch, rebase_branch,
         },
         BranchInfo, CommitDiffInfo, CommitInfo, GitRepository,
     },
@@ -95,7 +95,13 @@ pub struct App {
 
     // Flags
     pub should_quit: bool,
-    pub message: Option<String>,
+
+    // Status message with auto-clear
+    message: Option<String>,
+    message_time: Option<std::time::Instant>,
+
+    // Async fetch
+    fetch_receiver: Option<Receiver<Result<(), String>>>,
 }
 
 impl App {
@@ -146,6 +152,8 @@ impl App {
             uncommitted_diff_receiver: None,
             should_quit: false,
             message: None,
+            message_time: None,
+            fetch_receiver: None,
         })
     }
 
@@ -205,6 +213,63 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Check if async fetch has completed and process the result
+    pub fn update_fetch_status(&mut self) {
+        let result = match &self.fetch_receiver {
+            Some(rx) => rx.try_recv().ok(),
+            None => None,
+        };
+
+        if let Some(fetch_result) = result {
+            self.fetch_receiver = None;
+
+            match fetch_result {
+                Ok(()) => {
+                    if let Err(e) = self.refresh() {
+                        self.show_error(format!("Refresh failed: {}", e));
+                    } else {
+                        self.set_message("Fetched from origin");
+                    }
+                }
+                Err(e) => {
+                    self.show_error(e);
+                }
+            }
+        }
+    }
+
+    /// Check if fetch is currently in progress
+    pub fn is_fetching(&self) -> bool {
+        self.fetch_receiver.is_some()
+    }
+
+    /// Set a status message (will auto-clear after a few seconds)
+    pub fn set_message(&mut self, msg: impl Into<String>) {
+        self.message = Some(msg.into());
+        self.message_time = Some(std::time::Instant::now());
+    }
+
+    /// Get current message if not expired (5 seconds timeout)
+    pub fn get_message(&self) -> Option<&str> {
+        const MESSAGE_TIMEOUT_SECS: u64 = 5;
+
+        // Don't timeout while fetching
+        if self.is_fetching() {
+            return self.message.as_deref();
+        }
+
+        match (&self.message, &self.message_time) {
+            (Some(msg), Some(time)) => {
+                if time.elapsed().as_secs() < MESSAGE_TIMEOUT_SECS {
+                    Some(msg.as_str())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Update diff info for the selected commit (async)
@@ -381,6 +446,23 @@ impl App {
             }
             Action::Refresh => {
                 self.refresh()?;
+            }
+            Action::Fetch => {
+                // Don't start another fetch if one is already in progress
+                if self.fetch_receiver.is_some() {
+                    return Ok(());
+                }
+
+                let (tx, rx) = mpsc::channel();
+                let repo_path = self.repo_path.clone();
+
+                thread::spawn(move || {
+                    let result = fetch_origin(&repo_path).map_err(|e| e.to_string());
+                    let _ = tx.send(result);
+                });
+
+                self.fetch_receiver = Some(rx);
+                self.set_message("Fetching from origin...");
             }
             Action::Checkout => {
                 self.do_checkout()?;

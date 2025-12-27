@@ -15,6 +15,8 @@ pub struct StatusBar<'a> {
     repo_path: &'a str,
     head_name: Option<&'a str>,
     error_message: Option<&'a str>,
+    message: Option<&'a str>,
+    is_fetching: bool,
 }
 
 impl<'a> StatusBar<'a> {
@@ -28,6 +30,8 @@ impl<'a> StatusBar<'a> {
             repo_path: &app.repo_path,
             head_name: app.head_name.as_deref(),
             error_message,
+            message: app.get_message(),
+            is_fetching: app.is_fetching(),
         }
     }
 }
@@ -70,16 +74,35 @@ impl<'a> Widget for StatusBar<'a> {
         // Key hints (vary by mode)
         match self.mode {
             AppMode::Normal => {
-                spans.push(Span::styled(" j/k ", key_style));
-                spans.push(Span::styled("move ", desc_style));
-                spans.push(Span::styled(" Enter ", key_style));
-                spans.push(Span::styled("checkout ", desc_style));
-                spans.push(Span::styled(" b ", key_style));
-                spans.push(Span::styled("branch ", desc_style));
-                spans.push(Span::styled(" ? ", key_style));
-                spans.push(Span::styled("help ", desc_style));
-                spans.push(Span::styled(" q ", key_style));
-                spans.push(Span::styled("quit", desc_style));
+                // Show message if present (e.g., "Fetching from origin...")
+                if let Some(msg) = self.message {
+                    let msg_style = if self.is_fetching {
+                        // Yellow for in-progress operations
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        // Cyan for success messages (distinct from green branch label)
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    spans.push(Span::styled(format!(" {} ", msg), msg_style));
+                    spans.push(Span::raw("  "));
+                } else {
+                    spans.push(Span::styled(" j/k ", key_style));
+                    spans.push(Span::styled("move ", desc_style));
+                    spans.push(Span::styled(" Enter ", key_style));
+                    spans.push(Span::styled("checkout ", desc_style));
+                    spans.push(Span::styled(" b ", key_style));
+                    spans.push(Span::styled("branch ", desc_style));
+                    spans.push(Span::styled(" ? ", key_style));
+                    spans.push(Span::styled("help ", desc_style));
+                    spans.push(Span::styled(" q ", key_style));
+                    spans.push(Span::styled("quit", desc_style));
+                }
             }
             AppMode::Help => {
                 spans.push(Span::styled(" Esc/q ", key_style));

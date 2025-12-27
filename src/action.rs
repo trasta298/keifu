@@ -18,6 +18,7 @@ pub enum Action {
     Checkout,
     CreateBranch,
     DeleteBranch,
+    Fetch,
     Merge,
     Rebase,
 

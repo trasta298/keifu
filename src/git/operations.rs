@@ -1,5 +1,7 @@
 //! Git operations (checkout, merge, rebase, branch operations)
 
+use std::process::Command;
+
 use anyhow::{bail, Context, Result};
 use git2::{BranchType, Oid, Repository};
 
@@ -191,6 +193,22 @@ pub fn rebase_branch(repo: &Repository, onto_branch: &str) -> Result<()> {
     }
 
     rebase.finish(None)?;
+
+    Ok(())
+}
+
+/// Fetch from origin remote using git command
+pub fn fetch_origin(repo_path: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo_path)
+        .output()
+        .context("Failed to execute git fetch")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git fetch failed: {}", stderr.trim());
+    }
 
     Ok(())
 }

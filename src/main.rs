@@ -30,6 +30,9 @@ fn main() -> Result<()> {
             ui::draw(frame, &mut app);
         })?;
 
+        // Check if async fetch has completed
+        app.update_fetch_status();
+
         // Exit check
         if app.should_quit {
             break;
