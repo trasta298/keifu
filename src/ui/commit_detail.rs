@@ -11,6 +11,12 @@ use ratatui::{
 use crate::app::App;
 use crate::git::{CommitDiffInfo, FileChangeKind};
 
+use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
+
+/// Width threshold for switching to vertical layout
+/// When panel width would be <= 28 chars, use vertical layout
+const VERTICAL_LAYOUT_THRESHOLD: u16 = 56;
+
 pub struct CommitDetailWidget<'a> {
     commit_lines: Vec<Line<'a>>,
     file_lines: Vec<Line<'a>>,
@@ -18,117 +24,104 @@ pub struct CommitDetailWidget<'a> {
 
 impl<'a> CommitDetailWidget<'a> {
     pub fn new(app: &App) -> Self {
-        let mut commit_lines = Vec::new();
+        let commit_lines = Self::build_commit_lines(app);
+        let file_lines = Self::build_file_lines(app);
+        Self { commit_lines, file_lines }
+    }
 
-        if let Some(selected) = app.graph_list_state.selected() {
-            if let Some(node) = app.graph_layout.nodes.get(selected) {
-                // Handle uncommitted changes node
-                if node.is_uncommitted {
-                    commit_lines.push(Line::from(Span::styled(
-                        "Uncommitted Changes",
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                    commit_lines.push(Line::from(""));
-                    commit_lines.push(Line::from(Span::styled(
-                        format!("{} files with changes", node.uncommitted_count),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-
-                    // Build the file list (from cache)
-                    let file_lines = if app.is_diff_loading() {
-                        vec![Line::from(Span::styled(
-                            "Loading...",
-                            Style::default().fg(Color::DarkGray),
-                        ))]
-                    } else {
-                        Self::build_file_list_lines_from(app.cached_diff())
-                    };
-
-                    return Self {
-                        commit_lines,
-                        file_lines,
-                    };
-                }
-
-                // Skip connector rows
-                let Some(commit) = &node.commit else {
-                    commit_lines.push(Line::from(Span::styled(
-                        "(connector line)",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    return Self {
-                        commit_lines,
-                        file_lines: Vec::new(),
-                    };
-                };
-
-                // Commit hash
-                commit_lines.push(Line::from(vec![
-                    Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
-                ]));
-
-                // Author
-                commit_lines.push(Line::from(vec![
-                    Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        format!("{} <{}>", commit.author_name, commit.author_email),
-                        Style::default().fg(Color::Blue),
-                    ),
-                ]));
-
-                // Date
-                commit_lines.push(Line::from(vec![
-                    Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-
-                // Parent commits
-                if !commit.parent_oids.is_empty() {
-                    let parents: Vec<String> = commit
-                        .parent_oids
-                        .iter()
-                        .map(|oid| oid.to_string()[..7].to_string())
-                        .collect();
-                    commit_lines.push(Line::from(vec![
-                        Span::styled("Parent: ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(parents.join(", "), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
-
-                commit_lines.push(Line::from(""));
-
-                // Message
-                for line in commit.full_message.lines() {
-                    commit_lines.push(Line::from(Span::raw(line.to_string())));
-                }
-            }
-        } else {
-            commit_lines.push(Line::from(Span::styled(
-                "Select a commit",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-
-        // Build the file list (from cache)
-        let file_lines = if app.is_diff_loading() {
-            vec![Line::from(Span::styled(
+    fn build_file_lines(app: &App) -> Vec<Line<'a>> {
+        if app.is_diff_loading() {
+            return vec![Line::from(Span::styled(
                 "Loading...",
                 Style::default().fg(Color::DarkGray),
-            ))]
-        } else {
-            Self::build_file_list_lines_from(app.cached_diff())
+            ))];
+        }
+        Self::build_file_list_lines_from(app.cached_diff())
+    }
+
+    fn build_commit_lines(app: &App) -> Vec<Line<'a>> {
+        let Some(selected) = app.graph_list_state.selected() else {
+            return vec![Line::from(Span::styled(
+                "Select a commit",
+                Style::default().fg(Color::DarkGray),
+            ))];
         };
 
-        Self {
-            commit_lines,
-            file_lines,
+        let Some(node) = app.graph_layout.nodes.get(selected) else {
+            return Vec::new();
+        };
+
+        // Handle uncommitted changes node
+        if node.is_uncommitted {
+            return vec![
+                Line::from(Span::styled(
+                    "Uncommitted Changes",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!("{} files with changes", node.uncommitted_count),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
         }
+
+        // Handle connector rows (no commit)
+        let Some(commit) = &node.commit else {
+            return vec![Line::from(Span::styled(
+                "(connector line)",
+                Style::default().fg(Color::DarkGray),
+            ))];
+        };
+
+        // Build commit detail lines
+        let mut lines = vec![
+            // Commit hash
+            Line::from(vec![
+                Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
+            ]),
+            // Author
+            Line::from(vec![
+                Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{} <{}>", commit.author_name, commit.author_email),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]),
+            // Date
+            Line::from(vec![
+                Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+        ];
+
+        // Parent commits
+        if !commit.parent_oids.is_empty() {
+            let parents: Vec<String> = commit
+                .parent_oids
+                .iter()
+                .map(|oid| oid.to_string()[..7].to_string())
+                .collect();
+            lines.push(Line::from(vec![
+                Span::styled("Parent: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(parents.join(", "), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+
+        // Message
+        for line in commit.full_message.lines() {
+            lines.push(Line::from(Span::raw(line.to_string())));
+        }
+
+        lines
     }
 
     fn build_file_list_lines_from(diff: Option<&CommitDiffInfo>) -> Vec<Line<'a>> {
@@ -209,9 +202,20 @@ impl<'a> CommitDetailWidget<'a> {
 
 impl<'a> Widget for CommitDetailWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Horizontal split: left 50% (commit info) / right 50% (file list)
+        if area.width < MIN_WIDGET_WIDTH || area.height < MIN_WIDGET_HEIGHT {
+            render_placeholder_block(area, buf);
+            return;
+        }
+
+        // Use vertical layout when each panel would be <= 28 chars wide
+        let direction = if area.width <= VERTICAL_LAYOUT_THRESHOLD {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        };
+
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(direction)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 

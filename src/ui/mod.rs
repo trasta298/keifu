@@ -7,7 +7,10 @@ pub mod help_popup;
 pub mod status_bar;
 
 use ratatui::{
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    widgets::{Block, Borders, Paragraph, Widget},
     Frame,
 };
 
@@ -21,12 +24,40 @@ use self::{
     status_bar::StatusBar,
 };
 
+/// Minimum terminal width required for rendering
+const MIN_WIDTH: u16 = 20;
+/// Minimum terminal height required for rendering
+const MIN_HEIGHT: u16 = 6;
+
+/// Minimum widget dimensions for safe rendering
+pub const MIN_WIDGET_WIDTH: u16 = 12;
+pub const MIN_WIDGET_HEIGHT: u16 = 3;
+
+/// Render a placeholder block when widget area is too small
+pub fn render_placeholder_block(area: Rect, buf: &mut Buffer) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    block.render(area, buf);
+}
+
 /// Render the main UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
     // Update the diff cache once before rendering
     app.update_diff_cache();
 
     let area = frame.area();
+
+    // Check minimum terminal size to prevent buffer overflow panics
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        let msg = format!(
+            "Terminal too small ({}x{}). Need at least {}x{}.",
+            area.width, area.height, MIN_WIDTH, MIN_HEIGHT
+        );
+        let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::Red));
+        frame.render_widget(paragraph, area);
+        return;
+    }
 
     // Vertical split: main area + status bar (1 row)
     let vertical = Layout::default()
@@ -56,40 +87,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(StatusBar::new(app), status_area);
 
     // Branch info popup (when multiple branches exist on selected node)
-    let selected_branches = app.selected_node_branches();
-    if selected_branches.len() > 1 && matches!(app.mode, crate::app::AppMode::Normal) {
-        let popup_height = (selected_branches.len() + 2).min(10) as u16;
-        let max_branch_len = selected_branches
-            .iter()
-            .map(|b| b.len())
-            .max()
-            .unwrap_or(10);
-        let popup_width = (max_branch_len + 6).min(50) as u16;
-
-        // Calculate selected row's screen position (add 1 for border)
-        let selected_idx = app.graph_list_state.selected().unwrap_or(0);
-        let offset = app.graph_list_state.offset();
-        let selected_screen_y = graph_area.y + 1 + selected_idx.saturating_sub(offset) as u16;
-
-        // Position popup at right side of graph area
-        // Default: top position; shift down only if it overlaps with selected row
-        let popup_x = graph_area.x + graph_area.width.saturating_sub(popup_width + 2);
-        let default_popup_y = graph_area.y + 1;
-        let popup_y = if selected_screen_y >= default_popup_y
-            && selected_screen_y < default_popup_y + popup_height
-        {
-            // Overlap detected: position popup just below the selected row
-            (selected_screen_y + 1).min(graph_area.y + graph_area.height - popup_height)
-        } else {
-            default_popup_y
-        };
-        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-
-        frame.render_widget(
-            BranchInfoPopup::new(&selected_branches, app.selected_branch_name()),
-            popup_area,
-        );
-    }
+    render_branch_info_popup(frame, app, graph_area);
 
     // Popups
     match &app.mode {
@@ -107,6 +105,44 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         _ => {}
     }
+}
+
+/// Render branch info popup when multiple branches exist on selected node
+fn render_branch_info_popup(frame: &mut Frame, app: &App, graph_area: Rect) {
+    let selected_branches = app.selected_node_branches();
+
+    // Only show popup in Normal mode with multiple branches
+    if selected_branches.len() <= 1 || !matches!(app.mode, crate::app::AppMode::Normal) {
+        return;
+    }
+
+    let popup_height = (selected_branches.len() + 2).min(10) as u16;
+    let max_branch_len = selected_branches.iter().map(|b| b.len()).max().unwrap_or(10);
+    let popup_width = (max_branch_len + 6).min(50) as u16;
+
+    // Calculate selected row's screen position (add 1 for border)
+    let selected_idx = app.graph_list_state.selected().unwrap_or(0);
+    let offset = app.graph_list_state.offset();
+    let selected_screen_y = graph_area.y + 1 + selected_idx.saturating_sub(offset) as u16;
+
+    // Position popup at right side of graph area
+    let popup_x = graph_area.x + graph_area.width.saturating_sub(popup_width + 2);
+    let default_popup_y = graph_area.y + 1;
+
+    // Shift down only if popup overlaps with selected row
+    let overlaps_selected =
+        selected_screen_y >= default_popup_y && selected_screen_y < default_popup_y + popup_height;
+    let popup_y = if overlaps_selected {
+        (selected_screen_y + 1).min(graph_area.y + graph_area.height - popup_height)
+    } else {
+        default_popup_y
+    };
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+    frame.render_widget(
+        BranchInfoPopup::new(&selected_branches, app.selected_branch_name()),
+        popup_area,
+    );
 }
 
 /// Calculate a centered rectangle

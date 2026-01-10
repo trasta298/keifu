@@ -15,6 +15,8 @@ use crate::{
     graph::colors::get_color_by_index,
 };
 
+use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
+
 /// Calculate display width of a string
 /// Accounts for emoji variation selectors (U+FE0F) which cause preceding
 /// characters to display as 2-width emoji in terminals
@@ -103,30 +105,31 @@ fn optimize_branch_display(
 
     // Helper to create style based on selection state
     let make_style = |branch_name: &str| -> Style {
+        let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
         if selected_branch_name == Some(branch_name) {
-            Style::default()
-                .fg(Color::Black)
-                .bg(base_color)
-                .add_modifier(Modifier::BOLD)
+            style.fg(Color::Black).bg(base_color)
         } else {
-            Style::default().fg(base_color).add_modifier(Modifier::BOLD)
+            style
         }
     };
 
     // Helper to create label with optional abbreviation
     let make_label = |name: &str, suffix: Option<&str>| -> String {
-        let (label, abbrev_width) = match suffix {
-            Some(s) => (format!("[{} {}]", name, s), MAX_LABEL_WIDTH - s.len() - 3),
-            None => (format!("[{}]", name), MAX_LABEL_WIDTH),
-        };
-        if display_width(&label) > MAX_LABEL_WIDTH {
-            let abbrev = abbreviate_branch_label(name, abbrev_width, 0);
-            match suffix {
-                Some(s) => abbrev.replace(']', &format!(" {}]", s)),
-                None => abbrev,
-            }
+        let (label, abbrev_width) = if let Some(s) = suffix {
+            (format!("[{} {}]", name, s), MAX_LABEL_WIDTH - s.len() - 3)
         } else {
-            label
+            (format!("[{}]", name), MAX_LABEL_WIDTH)
+        };
+
+        if display_width(&label) <= MAX_LABEL_WIDTH {
+            return label;
+        }
+
+        let abbrev = abbreviate_branch_label(name, abbrev_width, 0);
+        if let Some(s) = suffix {
+            abbrev.replace(']', &format!(" {}]", s))
+        } else {
+            abbrev
         }
     };
 
@@ -153,10 +156,11 @@ fn optimize_branch_display(
 
     // Collapse multiple branches to single + count
     if result.len() > 1 {
-        // Find selected index directly from branch_names
+        // Find selected index directly from branch_names, clamped to result bounds
         let selected_idx = selected_branch_name
             .and_then(|sel| branch_names.iter().position(|n| n == sel || n.ends_with(&format!("/{}", sel))))
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .min(result.len().saturating_sub(1));
 
         let (label, style) = &result[selected_idx];
         let clean_name = label
@@ -191,6 +195,30 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
         current_width += ch_width;
     }
     result
+}
+
+/// Determine which right-side elements (date, author, hash) to display based on available width.
+/// Returns (show_date, show_author, show_hash, total_right_width).
+/// Priority: author > date > hash (hash disappears first, then date, then author)
+fn compute_right_side_visibility(remaining_for_content: usize) -> (bool, bool, bool, usize) {
+    // Widths for each display level (right-aligned block)
+    const WIDTH_DATE_AUTHOR_HASH: usize = 31; // " YYYY-MM-DD  author    hash   "
+    const WIDTH_DATE_AUTHOR: usize = 22; // " YYYY-MM-DD  author   "
+    const WIDTH_AUTHOR_ONLY: usize = 11; // "  author   "
+
+    // Ensure minimum space for branch + commit message before showing right-side info
+    const CONTENT_MIN_WIDTH: usize = 50;
+    let available = remaining_for_content.saturating_sub(CONTENT_MIN_WIDTH);
+
+    if available >= WIDTH_DATE_AUTHOR_HASH {
+        (true, true, true, WIDTH_DATE_AUTHOR_HASH)
+    } else if available >= WIDTH_DATE_AUTHOR {
+        (true, true, false, WIDTH_DATE_AUTHOR)
+    } else if available >= WIDTH_AUTHOR_ONLY {
+        (false, true, false, WIDTH_AUTHOR_ONLY)
+    } else {
+        (false, false, false, 0)
+    }
 }
 
 /// Abbreviate branch name to max_width, showing "+N" if more branches exist
@@ -355,13 +383,6 @@ fn render_graph_line<'a>(
     let hash = truncate_to_width(&commit.short_id, 7);
     let hash_formatted = format!("{:<7}", hash); // fixed 7 chars
 
-    // Widths for each display level (right-aligned block)
-    // Display order: date, author, hash
-    // Priority: author > date > hash (hash disappears first, then date, then author)
-    const WIDTH_DATE_AUTHOR_HASH: usize = 31; // " YYYY-MM-DD  author    hash   "
-    const WIDTH_DATE_AUTHOR: usize = 22; // " YYYY-MM-DD  author   "
-    const WIDTH_AUTHOR_ONLY: usize = 11; // "  author   "
-
     // Calculate branch width first (before rendering)
     let branch_width: usize = branch_display
         .iter()
@@ -374,16 +395,9 @@ fn render_graph_line<'a>(
     let graph_width = left_width;
     let remaining_for_content = total_width.saturating_sub(graph_width);
 
-    // Ensure minimum space for branch + commit message before showing right-side info
-    // This keeps right-side alignment consistent across all rows
-    const CONTENT_MIN_WIDTH: usize = 50;
-    let available_for_right = remaining_for_content.saturating_sub(CONTENT_MIN_WIDTH);
-    let (show_date, show_author, show_hash, right_width) = match available_for_right {
-        w if w >= WIDTH_DATE_AUTHOR_HASH => (true, true, true, WIDTH_DATE_AUTHOR_HASH),
-        w if w >= WIDTH_DATE_AUTHOR => (true, true, false, WIDTH_DATE_AUTHOR),
-        w if w >= WIDTH_AUTHOR_ONLY => (false, true, false, WIDTH_AUTHOR_ONLY),
-        _ => (false, false, false, 0),
-    };
+    // Determine which right-side elements to show based on available space
+    let (show_date, show_author, show_hash, right_width) =
+        compute_right_side_visibility(remaining_for_content);
 
     // Render branch labels
     for (i, (label, style)) in branch_display.iter().enumerate() {
@@ -440,6 +454,11 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        if area.width < MIN_WIDGET_WIDTH || area.height < MIN_WIDGET_HEIGHT {
+            render_placeholder_block(area, buf);
+            return;
+        }
+
         let block = Block::default()
             .title(" Commits ")
             .borders(Borders::ALL)
