@@ -78,11 +78,11 @@ fn optimize_branch_display(
         return Vec::new();
     }
 
-    let mut result: Vec<(String, Style)> = Vec::new();
-    let mut processed_remotes: HashSet<String> = HashSet::new();
+    // Max width for a single branch label (e.g., "[fix/feature-name]")
+    const MAX_LABEL_WIDTH: usize = 40;
 
-    // Split local and remote branches
-    let local_branches: Vec<&str> = branch_names
+    // Split local and remote branches (HashSet for O(1) lookup)
+    let local_branches: HashSet<&str> = branch_names
         .iter()
         .filter(|n| !n.starts_with("origin/"))
         .map(|s| s.as_str())
@@ -93,8 +93,7 @@ fn optimize_branch_display(
         .map(|s| s.as_str())
         .collect();
 
-    // Style: bold with the graph color index
-    // Main branch (blue) stays blue; other HEADs are green
+    // Determine base color: main branch stays blue; other HEADs are green
     let is_main_branch = color_index == crate::graph::colors::MAIN_BRANCH_COLOR;
     let base_color = if is_head && !is_main_branch {
         Color::Green
@@ -102,11 +101,9 @@ fn optimize_branch_display(
         get_color_by_index(color_index)
     };
 
-    // Helper to determine if a branch is selected and create appropriate style
+    // Helper to create style based on selection state
     let make_style = |branch_name: &str| -> Style {
-        let is_selected = selected_branch_name == Some(branch_name);
-        if is_selected {
-            // Inverted colors for selected branch
+        if selected_branch_name == Some(branch_name) {
             Style::default()
                 .fg(Color::Black)
                 .bg(base_color)
@@ -116,86 +113,58 @@ fn optimize_branch_display(
         }
     };
 
-    // Max width for a single branch label (e.g., "[fix/feature-name]")
-    const MAX_BRANCH_LABEL_WIDTH: usize = 40;
-
-    // Handle local branches
-    for local in local_branches.iter() {
-        let remote_name = format!("origin/{}", local);
-        let has_matching_remote = remote_branches.contains(remote_name.as_str());
-        let style = make_style(local);
-
-        if has_matching_remote {
-            // Local and remote match -> compact display
-            let label = format!("[{} ↔ origin]", local);
-            // "↔" is displayed as 2 chars in terminal but unicode_width counts it as 1
-            let label = if display_width(&label) > MAX_BRANCH_LABEL_WIDTH {
-                abbreviate_branch_label(local, MAX_BRANCH_LABEL_WIDTH - 11, 0)
-                    .replace("]", " ↔ origin]")
-            } else {
-                label
-            };
-            result.push((label, style));
-            processed_remotes.insert(remote_name);
+    // Helper to create label with optional abbreviation
+    let make_label = |name: &str, suffix: Option<&str>| -> String {
+        let (label, abbrev_width) = match suffix {
+            Some(s) => (format!("[{} {}]", name, s), MAX_LABEL_WIDTH - s.len() - 3),
+            None => (format!("[{}]", name), MAX_LABEL_WIDTH),
+        };
+        if display_width(&label) > MAX_LABEL_WIDTH {
+            let abbrev = abbreviate_branch_label(name, abbrev_width, 0);
+            match suffix {
+                Some(s) => abbrev.replace(']', &format!(" {}]", s)),
+                None => abbrev,
+            }
         } else {
-            // Local only
-            let label = format!("[{}]", local);
-            let label = if display_width(&label) > MAX_BRANCH_LABEL_WIDTH {
-                abbreviate_branch_label(local, MAX_BRANCH_LABEL_WIDTH, 0)
+            label
+        }
+    };
+
+    // Process branches in original order (matches tab order from filter_remote_duplicates)
+    let mut result: Vec<(String, Style)> = Vec::new();
+    for name in branch_names {
+        if let Some(local_name) = name.strip_prefix("origin/") {
+            // Remote branch: skip if matching local exists
+            if local_branches.contains(local_name) {
+                continue;
+            }
+            result.push((make_label(name, None), make_style(name)));
+        } else {
+            // Local branch: check for matching remote
+            let remote_name = format!("origin/{}", name);
+            let suffix = if remote_branches.contains(remote_name.as_str()) {
+                Some("↔ origin")
             } else {
-                label
+                None
             };
-            result.push((label, style));
+            result.push((make_label(name, suffix), make_style(name)));
         }
     }
 
-    // Add remote branches without a local counterpart (same color as graph)
-    for remote in branch_names.iter().filter(|n| n.starts_with("origin/")) {
-        if !processed_remotes.contains(remote) {
-            let style = make_style(remote);
-            let label = format!("[{}]", remote);
-            let label = if display_width(&label) > MAX_BRANCH_LABEL_WIDTH {
-                abbreviate_branch_label(remote, MAX_BRANCH_LABEL_WIDTH, 0)
-            } else {
-                label
-            };
-            result.push((label, style));
-        }
-    }
-
-    // If multiple branches, collapse to single + count (always compact)
+    // Collapse multiple branches to single + count
     if result.len() > 1 {
-        // Find the selected branch index by matching the original branch name
-        // The result order matches: local branches first, then remote-only branches
+        // Find selected index directly from branch_names
         let selected_idx = selected_branch_name
-            .and_then(|sel| {
-                // Try local branches first (indices 0..local_branches.len())
-                local_branches
-                    .iter()
-                    .position(|&name| name == sel)
-                    // Then try remote-only branches (indices after locals)
-                    .or_else(|| {
-                        result
-                            .iter()
-                            .skip(local_branches.len())
-                            .position(|(label, _)| {
-                                // Check if label contains the selected branch name
-                                label.contains(sel)
-                            })
-                            .map(|pos| local_branches.len() + pos)
-                    })
-            })
+            .and_then(|sel| branch_names.iter().position(|n| n == sel || n.ends_with(&format!("/{}", sel))))
             .unwrap_or(0);
 
         let (label, style) = &result[selected_idx];
-        let extra_count = result.len() - 1;
-        // Extract clean name from label
         let clean_name = label
             .trim_start_matches('[')
             .split([']', ' '])
             .next()
             .unwrap_or(label);
-        let abbreviated = abbreviate_branch_label(clean_name, MAX_BRANCH_LABEL_WIDTH, extra_count);
+        let abbreviated = abbreviate_branch_label(clean_name, MAX_LABEL_WIDTH, result.len() - 1);
 
         return vec![(abbreviated, *style)];
     }
