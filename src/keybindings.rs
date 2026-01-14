@@ -37,10 +37,8 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::GoToBottom)
         }
 
-        // Jump to HEAD
-        (KeyModifiers::SHIFT, KeyCode::Char('@')) | (KeyModifiers::NONE, KeyCode::Char('@')) => {
-            Some(Action::JumpToHead)
-        }
+        // Jump to HEAD (@ works with or without Shift depending on keyboard layout)
+        (_, KeyCode::Char('@')) => Some(Action::JumpToHead),
 
         // Branch jump
         (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {

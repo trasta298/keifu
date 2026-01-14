@@ -94,6 +94,40 @@ struct SearchState {
     current_match_index: Option<usize>,
 }
 
+impl SearchState {
+    /// Move to next match with wrap-around. Returns true if moved.
+    fn advance(&mut self) -> bool {
+        if self.matches.is_empty() {
+            return false;
+        }
+        let next = match self.current_match_index {
+            Some(idx) if idx + 1 < self.matches.len() => idx + 1,
+            _ => 0,
+        };
+        self.current_match_index = Some(next);
+        true
+    }
+
+    /// Move to previous match with wrap-around. Returns true if moved.
+    fn retreat(&mut self) -> bool {
+        if self.matches.is_empty() {
+            return false;
+        }
+        let prev = match self.current_match_index {
+            Some(0) | None => self.matches.len() - 1,
+            Some(idx) => idx - 1,
+        };
+        self.current_match_index = Some(prev);
+        true
+    }
+
+    /// Get the branch position index for the current match
+    fn current_branch_position(&self) -> Option<usize> {
+        self.current_match_index
+            .and_then(|idx| self.matches.get(idx).copied())
+    }
+}
+
 /// Application state
 pub struct App {
     pub mode: AppMode,
@@ -265,13 +299,8 @@ impl App {
         self.branch_positions
             .iter()
             .enumerate()
-            .filter_map(|(idx, (_, branch_name))| {
-                if branch_name.to_lowercase().contains(&query_lower) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
+            .filter(|(_, (_, name))| name.to_lowercase().contains(&query_lower))
+            .map(|(idx, _)| idx)
             .collect()
     }
 
@@ -289,10 +318,7 @@ impl App {
 
     /// Jump cursor to the currently selected match
     fn jump_to_current_match(&mut self) {
-        let Some(match_idx) = self.search_state.current_match_index else {
-            return;
-        };
-        let Some(&branch_pos_idx) = self.search_state.matches.get(match_idx) else {
+        let Some(branch_pos_idx) = self.search_state.current_branch_position() else {
             return;
         };
         let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) else {
@@ -305,34 +331,16 @@ impl App {
 
     /// Move to next search match (wraps around)
     fn move_to_next_match(&mut self) {
-        if self.search_state.matches.is_empty() {
-            return;
+        if self.search_state.advance() {
+            self.jump_to_current_match();
         }
-
-        let next_idx = match self.search_state.current_match_index {
-            Some(idx) if idx + 1 < self.search_state.matches.len() => idx + 1,
-            Some(_) => 0, // Wrap to first
-            None => 0,
-        };
-
-        self.search_state.current_match_index = Some(next_idx);
-        self.jump_to_current_match();
     }
 
     /// Move to previous search match (wraps around)
     fn move_to_prev_match(&mut self) {
-        if self.search_state.matches.is_empty() {
-            return;
+        if self.search_state.retreat() {
+            self.jump_to_current_match();
         }
-
-        let prev_idx = match self.search_state.current_match_index {
-            Some(0) => self.search_state.matches.len() - 1, // Wrap to last
-            Some(idx) => idx - 1,
-            None => self.search_state.matches.len() - 1,
-        };
-
-        self.search_state.current_match_index = Some(prev_idx);
-        self.jump_to_current_match();
     }
 
     /// Jump to the currently checked out branch (HEAD)
@@ -343,17 +351,17 @@ impl App {
         };
 
         // Find the branch position index that matches HEAD
-        if let Some(branch_pos_idx) = self
+        let Some((branch_pos_idx, (node_idx, _))) = self
             .branch_positions
             .iter()
-            .position(|(_, name)| name == head_name)
-        {
-            // Get the node index for this branch
-            if let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) {
-                self.selected_branch_position = Some(branch_pos_idx);
-                self.graph_list_state.select(Some(*node_idx));
-            }
-        }
+            .enumerate()
+            .find(|(_, (_, name))| name == head_name)
+        else {
+            return;
+        };
+
+        self.selected_branch_position = Some(branch_pos_idx);
+        self.graph_list_state.select(Some(*node_idx));
     }
 
     /// Check if async fetch has completed and process the result
