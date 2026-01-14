@@ -85,6 +85,15 @@ struct DiffResult {
     diff: Option<CommitDiffInfo>,
 }
 
+/// Search state for branch search feature
+#[derive(Debug, Clone, Default)]
+struct SearchState {
+    /// Indices into branch_positions that match the current search
+    matches: Vec<usize>,
+    /// Index of currently selected match (index into matches Vec)
+    current_match_index: Option<usize>,
+}
+
 /// Application state
 pub struct App {
     pub mode: AppMode,
@@ -105,6 +114,9 @@ pub struct App {
     pub branch_positions: Vec<(usize, String)>,
     /// Currently selected branch position index
     pub selected_branch_position: Option<usize>,
+
+    // Search state
+    search_state: SearchState,
 
     // Diff cache (async load)
     diff_cache: Option<CommitDiffInfo>,
@@ -167,6 +179,7 @@ impl App {
             graph_list_state,
             branch_positions,
             selected_branch_position,
+            search_state: SearchState::default(),
             diff_cache: None,
             diff_cache_oid: None,
             diff_loading_oid: None,
@@ -228,6 +241,9 @@ impl App {
         self.uncommitted_diff_loading = false;
         self.uncommitted_diff_receiver = None;
 
+        // Clear search state on refresh to avoid stale indices
+        self.search_state = SearchState::default();
+
         // Clamp the selection
         let max_commit = self.graph_layout.nodes.len().saturating_sub(1);
         if let Some(selected) = self.graph_list_state.selected() {
@@ -237,6 +253,107 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Perform case-insensitive substring search on branch names
+    fn search_branches(&self, query: &str) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let query_lower = query.to_lowercase();
+        self.branch_positions
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, (_, branch_name))| {
+                if branch_name.to_lowercase().contains(&query_lower) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Update search matches and jump to first match if any
+    fn update_search_matches(&mut self, query: &str) {
+        self.search_state.matches = self.search_branches(query);
+
+        if !self.search_state.matches.is_empty() {
+            self.search_state.current_match_index = Some(0);
+            self.jump_to_current_match();
+        } else {
+            self.search_state.current_match_index = None;
+        }
+    }
+
+    /// Jump cursor to the currently selected match
+    fn jump_to_current_match(&mut self) {
+        let Some(match_idx) = self.search_state.current_match_index else {
+            return;
+        };
+        let Some(&branch_pos_idx) = self.search_state.matches.get(match_idx) else {
+            return;
+        };
+        let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) else {
+            return;
+        };
+
+        self.selected_branch_position = Some(branch_pos_idx);
+        self.graph_list_state.select(Some(*node_idx));
+    }
+
+    /// Move to next search match (wraps around)
+    fn move_to_next_match(&mut self) {
+        if self.search_state.matches.is_empty() {
+            return;
+        }
+
+        let next_idx = match self.search_state.current_match_index {
+            Some(idx) if idx + 1 < self.search_state.matches.len() => idx + 1,
+            Some(_) => 0, // Wrap to first
+            None => 0,
+        };
+
+        self.search_state.current_match_index = Some(next_idx);
+        self.jump_to_current_match();
+    }
+
+    /// Move to previous search match (wraps around)
+    fn move_to_prev_match(&mut self) {
+        if self.search_state.matches.is_empty() {
+            return;
+        }
+
+        let prev_idx = match self.search_state.current_match_index {
+            Some(0) => self.search_state.matches.len() - 1, // Wrap to last
+            Some(idx) => idx - 1,
+            None => self.search_state.matches.len() - 1,
+        };
+
+        self.search_state.current_match_index = Some(prev_idx);
+        self.jump_to_current_match();
+    }
+
+    /// Jump to the currently checked out branch (HEAD)
+    fn jump_to_head(&mut self) {
+        // Find the HEAD branch name
+        let Some(head_name) = &self.head_name else {
+            return;
+        };
+
+        // Find the branch position index that matches HEAD
+        if let Some(branch_pos_idx) = self
+            .branch_positions
+            .iter()
+            .position(|(_, name)| name == head_name)
+        {
+            // Get the node index for this branch
+            if let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) {
+                self.selected_branch_position = Some(branch_pos_idx);
+                self.graph_list_state.select(Some(*node_idx));
+            }
+        }
     }
 
     /// Check if async fetch has completed and process the result
@@ -287,6 +404,16 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// Get search match count
+    pub fn search_match_count(&self) -> usize {
+        self.search_state.matches.len()
+    }
+
+    /// Get current search match index (1-based for display)
+    pub fn search_current_match(&self) -> Option<usize> {
+        self.search_state.current_match_index.map(|i| i + 1)
     }
 
     /// Update diff info for the selected commit (async)
@@ -443,6 +570,9 @@ impl App {
             Action::GoToBottom => {
                 self.select_last();
             }
+            Action::JumpToHead => {
+                self.jump_to_head();
+            }
             Action::NextBranch => {
                 self.move_to_next_branch();
             }
@@ -454,6 +584,12 @@ impl App {
             }
             Action::BranchRight => {
                 self.move_branch_right();
+            }
+            Action::NextMatch => {
+                self.move_to_next_match();
+            }
+            Action::PrevMatch => {
+                self.move_to_prev_match();
             }
             Action::ToggleHelp => {
                 self.mode = AppMode::Help;
@@ -486,6 +622,13 @@ impl App {
                     title: "New Branch Name".to_string(),
                     input: String::new(),
                     action: InputAction::CreateBranch,
+                };
+            }
+            Action::Search => {
+                self.mode = AppMode::Input {
+                    title: "Search branches".to_string(),
+                    input: String::new(),
+                    action: InputAction::Search,
                 };
             }
             Action::DeleteBranch => {
@@ -549,24 +692,39 @@ impl App {
 
         match action {
             Action::Confirm => {
-                if let InputAction::CreateBranch = input_action {
-                    if !input.is_empty() {
-                        if let Some(node) = self.selected_commit_node() {
-                            if let Some(commit) = &node.commit {
-                                create_branch(&self.repo.repo, &input, commit.oid)?;
-                                self.refresh()?;
+                match input_action {
+                    InputAction::CreateBranch => {
+                        if !input.is_empty() {
+                            if let Some(node) = self.selected_commit_node() {
+                                if let Some(commit) = &node.commit {
+                                    create_branch(&self.repo.repo, &input, commit.oid)?;
+                                    self.refresh()?;
+                                }
                             }
                         }
                     }
+                    InputAction::Search => {
+                        // Search complete - matches already populated from incremental search
+                        // Just return to Normal mode, keeping search state active
+                    }
                 }
-                // InputAction::Search is a TODO - no action needed
                 self.mode = AppMode::Normal;
             }
             Action::Cancel => {
+                // Clear search state when canceling
+                if matches!(input_action, InputAction::Search) {
+                    self.search_state = SearchState::default();
+                }
                 self.mode = AppMode::Normal;
             }
             Action::InputChar(c) => {
                 input.push(c);
+
+                // Incremental search for Search mode
+                if matches!(input_action, InputAction::Search) {
+                    self.update_search_matches(&input);
+                }
+
                 self.mode = AppMode::Input {
                     title,
                     input,
@@ -575,6 +733,12 @@ impl App {
             }
             Action::InputBackspace => {
                 input.pop();
+
+                // Update search on backspace
+                if matches!(input_action, InputAction::Search) {
+                    self.update_search_matches(&input);
+                }
+
                 self.mode = AppMode::Input {
                     title,
                     input,

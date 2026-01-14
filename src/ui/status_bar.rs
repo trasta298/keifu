@@ -8,7 +8,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, InputAction};
 
 pub struct StatusBar<'a> {
     mode: &'a AppMode,
@@ -17,6 +17,7 @@ pub struct StatusBar<'a> {
     error_message: Option<&'a str>,
     message: Option<&'a str>,
     is_fetching: bool,
+    search_info: Option<String>,
 }
 
 impl<'a> StatusBar<'a> {
@@ -25,6 +26,17 @@ impl<'a> StatusBar<'a> {
             AppMode::Error { message } => Some(message.as_str()),
             _ => None,
         };
+
+        // Generate search status message
+        let search_info = if app.search_match_count() > 0 {
+            let current = app.search_current_match().unwrap_or(0);
+            Some(format!("Match {}/{}", current, app.search_match_count()))
+        } else if matches!(app.mode, AppMode::Input { action: InputAction::Search, .. }) {
+            Some("No matches".to_string())
+        } else {
+            None
+        };
+
         Self {
             mode: &app.mode,
             repo_path: &app.repo_path,
@@ -32,6 +44,7 @@ impl<'a> StatusBar<'a> {
             error_message,
             message: app.get_message(),
             is_fetching: app.is_fetching(),
+            search_info,
         }
     }
 }
@@ -89,6 +102,16 @@ impl<'a> Widget for StatusBar<'a> {
                     spans.push(Span::raw("  "));
                 }
                 None => {
+                    // Show search info if available
+                    if let Some(info) = &self.search_info {
+                        let search_style = Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Green)
+                            .add_modifier(Modifier::BOLD);
+                        spans.push(Span::styled(format!(" {} ", info), search_style));
+                        spans.push(Span::raw("  "));
+                    }
+
                     spans.push(Span::styled(" j/k ", key_style));
                     spans.push(Span::styled("move ", desc_style));
                     spans.push(Span::styled(" Enter ", key_style));

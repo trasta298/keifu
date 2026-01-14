@@ -65,6 +65,10 @@ impl Widget for HelpPopup {
                 Span::styled("  G / End    ", key_style),
                 Span::styled("Go to bottom", desc_style),
             ]),
+            Line::from(vec![
+                Span::styled("  @          ", key_style),
+                Span::styled("Jump to HEAD (current branch)", desc_style),
+            ]),
             Line::from(""),
             Line::from(Span::styled("Git Operations", header_style)),
             Line::from(vec![
@@ -92,6 +96,20 @@ impl Widget for HelpPopup {
             //     Span::styled("  r          ", key_style),
             //     Span::styled("Rebase onto branch", desc_style),
             // ]),
+            Line::from(""),
+            Line::from(Span::styled("Search", header_style)),
+            Line::from(vec![
+                Span::styled("  /          ", key_style),
+                Span::styled("Search branches", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  n          ", key_style),
+                Span::styled("Next match", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  N          ", key_style),
+                Span::styled("Previous match", desc_style),
+            ]),
             Line::from(""),
             Line::from(Span::styled("Other", header_style)),
             Line::from(vec![

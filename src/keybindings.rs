@@ -37,6 +37,11 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::GoToBottom)
         }
 
+        // Jump to HEAD
+        (KeyModifiers::SHIFT, KeyCode::Char('@')) | (KeyModifiers::NONE, KeyCode::Char('@')) => {
+            Some(Action::JumpToHead)
+        }
+
         // Branch jump
         (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {
             Some(Action::NextBranch)
@@ -61,6 +66,10 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // TODO: merge and rebase will be implemented in the future
         // (KeyModifiers::NONE, KeyCode::Char('m')) => Some(Action::Merge),
         // (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Action::Rebase),
+
+        // Search navigation
+        (KeyModifiers::NONE, KeyCode::Char('n')) => Some(Action::NextMatch),
+        (KeyModifiers::SHIFT, KeyCode::Char('N')) => Some(Action::PrevMatch),
 
         // UI
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Action::Search),

@@ -9,10 +9,13 @@ pub enum Action {
     PageDown,
     GoToTop,
     GoToBottom,
+    JumpToHead,
     NextBranch,
     PrevBranch,
     BranchLeft,
     BranchRight,
+    NextMatch,
+    PrevMatch,
 
     // Git operations
     Checkout,
