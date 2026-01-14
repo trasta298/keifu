@@ -27,6 +27,9 @@ thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 unicode-width = "0.2"
 
+# Search
+fuzzy-matcher = "0.3"
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -19,6 +19,7 @@ use crate::{
         },
         BranchInfo, CommitDiffInfo, CommitInfo, GitRepository,
     },
+    search::{fuzzy_search_branches, FuzzySearchResult},
 };
 
 /// Filter branch names to exclude remote branches that have matching local branches
@@ -65,7 +66,7 @@ pub enum AppMode {
 }
 
 /// Input action kinds
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputAction {
     CreateBranch,
     Search,
@@ -88,10 +89,59 @@ struct DiffResult {
 /// Search state for branch search feature
 #[derive(Debug, Clone, Default)]
 struct SearchState {
-    /// Indices into branch_positions that match the current search
-    matches: Vec<usize>,
-    /// Index of currently selected match (index into matches Vec)
-    current_match_index: Option<usize>,
+    /// Fuzzy search results (sorted by score)
+    fuzzy_matches: Vec<FuzzySearchResult>,
+    /// Selected index in the dropdown (None if no results)
+    dropdown_selection: Option<usize>,
+    /// Position before search started (for cancel restoration)
+    original_position: Option<usize>,
+    /// Original node selection before search started
+    original_node: Option<usize>,
+}
+
+impl SearchState {
+    /// Move selection up in the dropdown (with wrap-around)
+    fn select_up(&mut self) {
+        if self.fuzzy_matches.is_empty() {
+            return;
+        }
+        self.dropdown_selection = Some(match self.dropdown_selection {
+            Some(0) | None => self.fuzzy_matches.len() - 1,
+            Some(idx) => idx - 1,
+        });
+    }
+
+    /// Move selection down in the dropdown (with wrap-around)
+    fn select_down(&mut self) {
+        if self.fuzzy_matches.is_empty() {
+            return;
+        }
+        let last_idx = self.fuzzy_matches.len() - 1;
+        self.dropdown_selection = Some(match self.dropdown_selection {
+            Some(idx) if idx < last_idx => idx + 1,
+            _ => 0,
+        });
+    }
+
+    /// Get the currently selected result
+    fn selected_result(&self) -> Option<&FuzzySearchResult> {
+        self.dropdown_selection
+            .and_then(|idx| self.fuzzy_matches.get(idx))
+    }
+
+    /// Clamp dropdown selection to valid range after results update
+    fn clamp_selection(&mut self) {
+        if self.fuzzy_matches.is_empty() {
+            self.dropdown_selection = None;
+        } else if let Some(idx) = self.dropdown_selection {
+            if idx >= self.fuzzy_matches.len() {
+                self.dropdown_selection = Some(self.fuzzy_matches.len() - 1);
+            }
+        } else {
+            // Auto-select first result if we have results
+            self.dropdown_selection = Some(0);
+        }
+    }
 }
 
 /// Application state
@@ -255,84 +305,48 @@ impl App {
         Ok(())
     }
 
-    /// Perform case-insensitive substring search on branch names
-    fn search_branches(&self, query: &str) -> Vec<usize> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-
-        let query_lower = query.to_lowercase();
-        self.branch_positions
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, (_, branch_name))| {
-                if branch_name.to_lowercase().contains(&query_lower) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect()
+    /// Update fuzzy search results for the given query
+    fn update_fuzzy_search(&mut self, query: &str) {
+        self.search_state.fuzzy_matches = fuzzy_search_branches(query, &self.branch_positions);
+        self.search_state.clamp_selection();
     }
 
-    /// Update search matches and jump to first match if any
-    fn update_search_matches(&mut self, query: &str) {
-        self.search_state.matches = self.search_branches(query);
-
-        if !self.search_state.matches.is_empty() {
-            self.search_state.current_match_index = Some(0);
-            self.jump_to_current_match();
-        } else {
-            self.search_state.current_match_index = None;
-        }
-    }
-
-    /// Jump cursor to the currently selected match
-    fn jump_to_current_match(&mut self) {
-        let Some(match_idx) = self.search_state.current_match_index else {
+    /// Jump to the currently selected search result
+    fn jump_to_search_result(&mut self) {
+        let Some(result) = self.search_state.selected_result() else {
             return;
         };
-        let Some(&branch_pos_idx) = self.search_state.matches.get(match_idx) else {
-            return;
-        };
-        let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) else {
+        let branch_idx = result.branch_idx;
+        let Some((node_idx, _)) = self.branch_positions.get(branch_idx) else {
             return;
         };
 
-        self.selected_branch_position = Some(branch_pos_idx);
+        self.selected_branch_position = Some(branch_idx);
         self.graph_list_state.select(Some(*node_idx));
     }
 
-    /// Move to next search match (wraps around)
-    fn move_to_next_match(&mut self) {
-        if self.search_state.matches.is_empty() {
-            return;
-        }
-
-        let next_idx = match self.search_state.current_match_index {
-            Some(idx) if idx + 1 < self.search_state.matches.len() => idx + 1,
-            Some(_) => 0, // Wrap to first
-            None => 0,
-        };
-
-        self.search_state.current_match_index = Some(next_idx);
-        self.jump_to_current_match();
+    /// Save current position before starting search
+    fn save_search_position(&mut self) {
+        self.search_state.original_position = self.selected_branch_position;
+        self.search_state.original_node = self.graph_list_state.selected();
     }
 
-    /// Move to previous search match (wraps around)
-    fn move_to_prev_match(&mut self) {
-        if self.search_state.matches.is_empty() {
-            return;
+    /// Restore position saved before search (for cancel)
+    fn restore_search_position(&mut self) {
+        self.selected_branch_position = self.search_state.original_position;
+        if let Some(node) = self.search_state.original_node {
+            self.graph_list_state.select(Some(node));
         }
+    }
 
-        let prev_idx = match self.search_state.current_match_index {
-            Some(0) => self.search_state.matches.len() - 1, // Wrap to last
-            Some(idx) => idx - 1,
-            None => self.search_state.matches.len() - 1,
-        };
+    /// Get current search results for UI rendering
+    pub fn search_results(&self) -> &[FuzzySearchResult] {
+        &self.search_state.fuzzy_matches
+    }
 
-        self.search_state.current_match_index = Some(prev_idx);
-        self.jump_to_current_match();
+    /// Get current dropdown selection index
+    pub fn search_selection(&self) -> Option<usize> {
+        self.search_state.dropdown_selection
     }
 
     /// Jump to the currently checked out branch (HEAD)
@@ -343,17 +357,17 @@ impl App {
         };
 
         // Find the branch position index that matches HEAD
-        if let Some(branch_pos_idx) = self
+        let Some((branch_pos_idx, (node_idx, _))) = self
             .branch_positions
             .iter()
-            .position(|(_, name)| name == head_name)
-        {
-            // Get the node index for this branch
-            if let Some((node_idx, _)) = self.branch_positions.get(branch_pos_idx) {
-                self.selected_branch_position = Some(branch_pos_idx);
-                self.graph_list_state.select(Some(*node_idx));
-            }
-        }
+            .enumerate()
+            .find(|(_, (_, name))| name == head_name)
+        else {
+            return;
+        };
+
+        self.selected_branch_position = Some(branch_pos_idx);
+        self.graph_list_state.select(Some(*node_idx));
     }
 
     /// Check if async fetch has completed and process the result
@@ -408,12 +422,7 @@ impl App {
 
     /// Get search match count
     pub fn search_match_count(&self) -> usize {
-        self.search_state.matches.len()
-    }
-
-    /// Get current search match index (1-based for display)
-    pub fn search_current_match(&self) -> Option<usize> {
-        self.search_state.current_match_index.map(|i| i + 1)
+        self.search_state.fuzzy_matches.len()
     }
 
     /// Update diff info for the selected commit (async)
@@ -585,12 +594,6 @@ impl App {
             Action::BranchRight => {
                 self.move_branch_right();
             }
-            Action::NextMatch => {
-                self.move_to_next_match();
-            }
-            Action::PrevMatch => {
-                self.move_to_prev_match();
-            }
             Action::ToggleHelp => {
                 self.mode = AppMode::Help;
             }
@@ -625,6 +628,8 @@ impl App {
                 };
             }
             Action::Search => {
+                // Save position for cancel restoration
+                self.save_search_position();
                 self.mode = AppMode::Input {
                     title: "Search branches".to_string(),
                     input: String::new(),
@@ -704,25 +709,29 @@ impl App {
                         }
                     }
                     InputAction::Search => {
-                        // Search complete - matches already populated from incremental search
-                        // Just return to Normal mode, keeping search state active
+                        // Jump to selected result and exit search mode
+                        self.jump_to_search_result();
                     }
                 }
+                // Clear search state after confirming
+                self.search_state = SearchState::default();
                 self.mode = AppMode::Normal;
             }
             Action::Cancel => {
-                // Clear search state when canceling
+                // Restore position when canceling search
                 if matches!(input_action, InputAction::Search) {
-                    self.search_state = SearchState::default();
+                    self.restore_search_position();
                 }
+                self.search_state = SearchState::default();
                 self.mode = AppMode::Normal;
             }
             Action::InputChar(c) => {
                 input.push(c);
 
-                // Incremental search for Search mode
+                // Incremental fuzzy search with live preview
                 if matches!(input_action, InputAction::Search) {
-                    self.update_search_matches(&input);
+                    self.update_fuzzy_search(&input);
+                    self.jump_to_search_result();
                 }
 
                 self.mode = AppMode::Input {
@@ -732,11 +741,22 @@ impl App {
                 };
             }
             Action::InputBackspace => {
+                // Empty input + backspace = cancel (like Esc)
+                if input.is_empty() {
+                    if matches!(input_action, InputAction::Search) {
+                        self.restore_search_position();
+                    }
+                    self.search_state = SearchState::default();
+                    self.mode = AppMode::Normal;
+                    return Ok(());
+                }
+
                 input.pop();
 
-                // Update search on backspace
+                // Update fuzzy search on backspace with live preview
                 if matches!(input_action, InputAction::Search) {
-                    self.update_search_matches(&input);
+                    self.update_fuzzy_search(&input);
+                    self.jump_to_search_result();
                 }
 
                 self.mode = AppMode::Input {
@@ -744,6 +764,22 @@ impl App {
                     input,
                     action: input_action,
                 };
+            }
+            Action::SearchSelectUp => {
+                self.search_state.select_up();
+                self.jump_to_search_result();
+            }
+            Action::SearchSelectDown => {
+                self.search_state.select_down();
+                self.jump_to_search_result();
+            }
+            Action::SearchSelectUpQuiet => {
+                self.search_state.select_up();
+                // No graph jump - just move in dropdown
+            }
+            Action::SearchSelectDownQuiet => {
+                self.search_state.select_down();
+                // No graph jump - just move in dropdown
             }
             _ => {}
         }

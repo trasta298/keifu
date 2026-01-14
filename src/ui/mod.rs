@@ -4,6 +4,7 @@ pub mod commit_detail;
 pub mod dialog;
 pub mod graph_view;
 pub mod help_popup;
+pub mod search_dropdown;
 pub mod status_bar;
 
 use ratatui::{
@@ -14,13 +15,14 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, AppMode, InputAction};
 
 use self::{
     commit_detail::CommitDetailWidget,
     dialog::{BranchInfoPopup, ConfirmDialog, InputDialog},
     graph_view::GraphViewWidget,
     help_popup::HelpPopup,
+    search_dropdown::{calculate_dropdown_height, SearchDropdown},
     status_bar::StatusBar,
 };
 
@@ -91,15 +93,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Popups
     match &app.mode {
-        crate::app::AppMode::Help => {
+        AppMode::Help => {
             let popup_area = centered_rect(60, 70, area);
             frame.render_widget(HelpPopup, popup_area);
         }
-        crate::app::AppMode::Input { title, input, .. } => {
+        AppMode::Input {
+            input,
+            action: InputAction::Search,
+            ..
+        } => {
+            // Search dropdown at bottom of screen
+            let results = app.search_results();
+            let height = calculate_dropdown_height(results.len());
+            let popup_area = bottom_rect(60, height, area);
+            frame.render_widget(
+                SearchDropdown::new(input, results, &app.branch_positions, app.search_selection()),
+                popup_area,
+            );
+        }
+        AppMode::Input { title, input, .. } => {
             let popup_area = centered_rect(50, 20, area);
             frame.render_widget(InputDialog::new(title, input), popup_area);
         }
-        crate::app::AppMode::Confirm { message, .. } => {
+        AppMode::Confirm { message, .. } => {
             let popup_area = centered_rect(50, 20, area);
             frame.render_widget(ConfirmDialog::new(message), popup_area);
         }
@@ -164,4 +180,21 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// Calculate a bottom-aligned rectangle (for dropdowns)
+fn bottom_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let clamped_height = height.min(area.height.saturating_sub(2));
+    let y = area.y + area.height.saturating_sub(clamped_height + 1);
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(area);
+
+    Rect::new(horizontal[1].x, y, horizontal[1].width, clamped_height)
 }

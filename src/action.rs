@@ -14,8 +14,6 @@ pub enum Action {
     PrevBranch,
     BranchLeft,
     BranchRight,
-    NextMatch,
-    PrevMatch,
 
     // Git operations
     Checkout,
@@ -36,4 +34,10 @@ pub enum Action {
     Cancel,
     InputChar(char),
     InputBackspace,
+
+    // Search dropdown
+    SearchSelectUp,
+    SearchSelectDown,
+    SearchSelectUpQuiet,   // Tab navigation (no graph jump)
+    SearchSelectDownQuiet, // Tab navigation (no graph jump)
 }

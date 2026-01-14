@@ -9,7 +9,13 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
     match mode {
         AppMode::Normal => map_normal_mode(key),
         AppMode::Help => map_help_mode(key),
-        AppMode::Input { .. } => map_input_mode(key),
+        AppMode::Input { action, .. } => {
+            if *action == crate::app::InputAction::Search {
+                map_search_mode(key)
+            } else {
+                map_input_mode(key)
+            }
+        }
         AppMode::Confirm { .. } => map_confirm_mode(key),
         AppMode::Error { .. } => map_error_mode(key),
     }
@@ -37,10 +43,8 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::GoToBottom)
         }
 
-        // Jump to HEAD
-        (KeyModifiers::SHIFT, KeyCode::Char('@')) | (KeyModifiers::NONE, KeyCode::Char('@')) => {
-            Some(Action::JumpToHead)
-        }
+        // Jump to HEAD (@ works with or without Shift depending on keyboard layout)
+        (_, KeyCode::Char('@')) => Some(Action::JumpToHead),
 
         // Branch jump
         (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {
@@ -67,10 +71,6 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // (KeyModifiers::NONE, KeyCode::Char('m')) => Some(Action::Merge),
         // (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Action::Rebase),
 
-        // Search navigation
-        (KeyModifiers::NONE, KeyCode::Char('n')) => Some(Action::NextMatch),
-        (KeyModifiers::SHIFT, KeyCode::Char('N')) => Some(Action::PrevMatch),
-
         // UI
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Action::Search),
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => Some(Action::Refresh),
@@ -96,6 +96,24 @@ fn map_input_mode(key: KeyEvent) -> Option<Action> {
         KeyCode::Esc => Some(Action::Cancel),
         KeyCode::Backspace => Some(Action::InputBackspace),
         KeyCode::Char(c) => Some(Action::InputChar(c)),
+        _ => None,
+    }
+}
+
+fn map_search_mode(key: KeyEvent) -> Option<Action> {
+    match (key.modifiers, key.code) {
+        // Navigation in dropdown (Tab doesn't move graph)
+        (KeyModifiers::NONE, KeyCode::Up) => Some(Action::SearchSelectUp),
+        (KeyModifiers::NONE, KeyCode::Down) => Some(Action::SearchSelectDown),
+        (KeyModifiers::CONTROL, KeyCode::Char('k')) => Some(Action::SearchSelectUp),
+        (KeyModifiers::CONTROL, KeyCode::Char('j')) => Some(Action::SearchSelectDown),
+        (KeyModifiers::NONE, KeyCode::Tab) => Some(Action::SearchSelectDownQuiet),
+        (KeyModifiers::SHIFT, KeyCode::BackTab) => Some(Action::SearchSelectUpQuiet),
+        // Standard input actions
+        (_, KeyCode::Enter) => Some(Action::Confirm),
+        (_, KeyCode::Esc) => Some(Action::Cancel),
+        (_, KeyCode::Backspace) | (_, KeyCode::Delete) => Some(Action::InputBackspace),
+        (_, KeyCode::Char(c)) => Some(Action::InputChar(c)),
         _ => None,
     }
 }

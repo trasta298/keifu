@@ -100,15 +100,23 @@ impl Widget for HelpPopup {
             Line::from(Span::styled("Search", header_style)),
             Line::from(vec![
                 Span::styled("  /          ", key_style),
-                Span::styled("Search branches", desc_style),
+                Span::styled("Search branches (fuzzy)", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  n          ", key_style),
-                Span::styled("Next match", desc_style),
+                Span::styled("  ↑ / C-k    ", key_style),
+                Span::styled("Select previous result", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  N          ", key_style),
-                Span::styled("Previous match", desc_style),
+                Span::styled("  ↓ / C-j    ", key_style),
+                Span::styled("Select next result", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter      ", key_style),
+                Span::styled("Jump to selected branch", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  Esc        ", key_style),
+                Span::styled("Cancel search", desc_style),
             ]),
             Line::from(""),
             Line::from(Span::styled("Other", header_style)),
