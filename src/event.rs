@@ -22,4 +22,3 @@ pub fn get_key_event(event: &Event) -> Option<KeyEvent> {
         None
     }
 }
-

@@ -26,7 +26,10 @@ impl<'a> CommitDetailWidget<'a> {
     pub fn new(app: &App) -> Self {
         let commit_lines = Self::build_commit_lines(app);
         let file_lines = Self::build_file_lines(app);
-        Self { commit_lines, file_lines }
+        Self {
+            commit_lines,
+            file_lines,
+        }
     }
 
     fn build_file_lines(app: &App) -> Vec<Line<'a>> {

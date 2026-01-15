@@ -261,19 +261,20 @@ impl App {
             .flatten()
             .map(|s| s.file_count);
         let head_commit_oid = self.repo.head_oid();
-        self.graph_layout =
-            build_graph(&self.commits, &self.branches, uncommitted_count, head_commit_oid);
+        self.graph_layout = build_graph(
+            &self.commits,
+            &self.branches,
+            uncommitted_count,
+            head_commit_oid,
+        );
         self.head_name = self.repo.head_name();
 
         // Rebuild branch positions
         self.branch_positions = Self::build_branch_positions(&self.graph_layout);
 
         // Restore branch selection if the branch still exists
-        self.selected_branch_position = prev_branch_name.and_then(|name| {
-            self.branch_positions
-                .iter()
-                .position(|(_, n)| n == &name)
-        });
+        self.selected_branch_position = prev_branch_name
+            .and_then(|name| self.branch_positions.iter().position(|(_, n)| n == &name));
 
         // Sync node selection with branch selection
         if let Some(pos) = self.selected_branch_position {
@@ -447,9 +448,10 @@ impl App {
         }
 
         // Check if uncommitted node is selected
-        let selected_node = self.graph_list_state.selected().and_then(|idx| {
-            self.graph_layout.nodes.get(idx)
-        });
+        let selected_node = self
+            .graph_list_state
+            .selected()
+            .and_then(|idx| self.graph_layout.nodes.get(idx));
 
         let Some(node) = selected_node else {
             return;

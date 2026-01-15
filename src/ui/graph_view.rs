@@ -183,7 +183,11 @@ fn optimize_branch_display(
     if result.len() > 1 {
         // Find selected index directly from branch_names, clamped to result bounds
         let selected_idx = selected_branch_name
-            .and_then(|sel| branch_names.iter().position(|n| n == sel || n.ends_with(&format!("/{}", sel))))
+            .and_then(|sel| {
+                branch_names
+                    .iter()
+                    .position(|n| n == sel || n.ends_with(&format!("/{}", sel)))
+            })
             .unwrap_or(0)
             .min(result.len().saturating_sub(1));
 

@@ -342,13 +342,13 @@ fn test_chained_merges_different_branches() {
     // 713c464 -> root
     // root
     let commits = vec![
-        make_commit("main-merge", vec!["feature-merge", "release"]),    // cdd4866
-        make_commit("develop-merge", vec!["develop", "release"]),       // 334c592
-        make_commit("release", vec!["root"]),                           // 41654ad
-        make_commit("develop", vec!["root"]),                           // 7e6637e
-        make_commit("feature-merge", vec!["root", "hotfix"]),           // 0c8f4c0
-        make_commit("hotfix", vec!["root"]),                            // 713c464
-        make_commit("root", vec![]),                                    // 0e9a974
+        make_commit("main-merge", vec!["feature-merge", "release"]), // cdd4866
+        make_commit("develop-merge", vec!["develop", "release"]),    // 334c592
+        make_commit("release", vec!["root"]),                        // 41654ad
+        make_commit("develop", vec!["root"]),                        // 7e6637e
+        make_commit("feature-merge", vec!["root", "hotfix"]),        // 0c8f4c0
+        make_commit("hotfix", vec!["root"]),                         // 713c464
+        make_commit("root", vec![]),                                 // 0e9a974
     ];
     let branches = vec![
         make_branch("main", "main-merge", false),
@@ -371,12 +371,22 @@ fn test_chained_merges_different_branches() {
     let main_merge_idx = layout
         .nodes
         .iter()
-        .position(|n| n.commit.as_ref().map(|c| c.short_id == "main-merge").unwrap_or(false))
+        .position(|n| {
+            n.commit
+                .as_ref()
+                .map(|c| c.short_id == "main-merge")
+                .unwrap_or(false)
+        })
         .expect("main-merge not found");
     let feature_merge_idx = layout
         .nodes
         .iter()
-        .position(|n| n.commit.as_ref().map(|c| c.short_id == "feature-merge").unwrap_or(false))
+        .position(|n| {
+            n.commit
+                .as_ref()
+                .map(|c| c.short_id == "feature-merge")
+                .unwrap_or(false)
+        })
         .expect("feature-merge not found");
 
     // Count the number of Pipe cells on the lane of main-merge between the two commits
@@ -443,12 +453,22 @@ fn test_hotfix_merged_into_multiple_branches() {
     let hotfix_idx = layout
         .nodes
         .iter()
-        .position(|n| n.commit.as_ref().map(|c| c.short_id == "hotfix").unwrap_or(false))
+        .position(|n| {
+            n.commit
+                .as_ref()
+                .map(|c| c.short_id == "hotfix")
+                .unwrap_or(false)
+        })
         .expect("hotfix not found");
     let main_merge_idx = layout
         .nodes
         .iter()
-        .position(|n| n.commit.as_ref().map(|c| c.short_id == "main-merge").unwrap_or(false))
+        .position(|n| {
+            n.commit
+                .as_ref()
+                .map(|c| c.short_id == "main-merge")
+                .unwrap_or(false)
+        })
         .expect("main-merge not found");
 
     // Check that main-merge row has a direct connection to hotfix

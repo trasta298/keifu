@@ -322,7 +322,13 @@ pub fn build_graph(
             };
 
             // Include parent_already_shown flag for proper symbol selection
-            parent_lanes.push((*parent_oid, parent_lane, was_existing, parent_color, parent_already_shown));
+            parent_lanes.push((
+                *parent_oid,
+                parent_lane,
+                was_existing,
+                parent_color,
+                parent_already_shown,
+            ));
         }
 
         // Skip lane_merge for fork siblings
@@ -583,7 +589,9 @@ fn build_row_cells_with_colors(
     }
 
     // Draw connections to parents
-    for &(_parent_oid, parent_lane, was_existing, parent_color, already_shown) in parent_lanes.iter() {
+    for &(_parent_oid, parent_lane, was_existing, parent_color, already_shown) in
+        parent_lanes.iter()
+    {
         if parent_lane == commit_lane {
             // Same lane - only a vertical line (drawn on next row)
             continue;

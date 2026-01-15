@@ -17,10 +17,7 @@ pub struct FuzzySearchResult {
 /// Performs fuzzy search on branch names
 ///
 /// Returns results sorted by score (descending), then by branch name (ascending) for ties.
-pub fn fuzzy_search_branches(
-    query: &str,
-    branches: &[(usize, String)],
-) -> Vec<FuzzySearchResult> {
+pub fn fuzzy_search_branches(query: &str, branches: &[(usize, String)]) -> Vec<FuzzySearchResult> {
     if query.is_empty() {
         return Vec::new();
     }
@@ -30,18 +27,22 @@ pub fn fuzzy_search_branches(
         .iter()
         .enumerate()
         .filter_map(|(idx, (_, name))| {
-            matcher.fuzzy_indices(name, query).map(|(score, indices)| {
-                FuzzySearchResult {
+            matcher
+                .fuzzy_indices(name, query)
+                .map(|(score, indices)| FuzzySearchResult {
                     branch_idx: idx,
                     score,
                     matched_indices: indices,
-                }
-            })
+                })
         })
         .collect();
 
     // Sort by score descending, then by branch_idx ascending (newer branches first)
-    results.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.branch_idx.cmp(&b.branch_idx)));
+    results.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.branch_idx.cmp(&b.branch_idx))
+    });
 
     results
 }
@@ -82,10 +83,7 @@ mod tests {
 
     #[test]
     fn test_typo_tolerance() {
-        let branches = vec![
-            (0, "main".to_string()),
-            (1, "feature/auth".to_string()),
-        ];
+        let branches = vec![(0, "main".to_string()), (1, "feature/auth".to_string())];
         // "featre" (typo) should still match "feature"
         let results = fuzzy_search_branches("featre", &branches);
         assert!(!results.is_empty());

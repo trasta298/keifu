@@ -156,7 +156,11 @@ impl<'a> Widget for BranchInfoPopup<'a> {
 
             let prefix = if is_selected { "▶ " } else { "  " };
             let max_width = inner.width as usize;
-            let display = format!("{}{}", prefix, truncate_with_ellipsis(branch, max_width.saturating_sub(2)));
+            let display = format!(
+                "{}{}",
+                prefix,
+                truncate_with_ellipsis(branch, max_width.saturating_sub(2))
+            );
 
             buf.set_string(inner.x, y, &display, style);
         }

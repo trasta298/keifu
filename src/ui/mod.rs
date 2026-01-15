@@ -107,7 +107,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let height = calculate_dropdown_height(results.len());
             let popup_area = bottom_rect(60, height, area);
             frame.render_widget(
-                SearchDropdown::new(input, results, &app.branch_positions, app.search_selection()),
+                SearchDropdown::new(
+                    input,
+                    results,
+                    &app.branch_positions,
+                    app.search_selection(),
+                ),
                 popup_area,
             );
         }
@@ -133,7 +138,11 @@ fn render_branch_info_popup(frame: &mut Frame, app: &App, graph_area: Rect) {
     }
 
     let popup_height = (selected_branches.len() + 2).min(10) as u16;
-    let max_branch_len = selected_branches.iter().map(|b| b.len()).max().unwrap_or(10);
+    let max_branch_len = selected_branches
+        .iter()
+        .map(|b| b.len())
+        .max()
+        .unwrap_or(10);
     let popup_width = (max_branch_len + 6).min(50) as u16;
 
     // Calculate selected row's screen position (add 1 for border)

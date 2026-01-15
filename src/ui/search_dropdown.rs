@@ -43,7 +43,11 @@ impl<'a> SearchDropdown<'a> {
     }
 
     /// Render a branch name with matched characters highlighted
-    fn render_highlighted_name(&self, result: &FuzzySearchResult, max_width: usize) -> Vec<Span<'a>> {
+    fn render_highlighted_name(
+        &self,
+        result: &FuzzySearchResult,
+        max_width: usize,
+    ) -> Vec<Span<'a>> {
         let name = self.get_branch_name(result);
         let matched_set: std::collections::HashSet<usize> =
             result.matched_indices.iter().copied().collect();
@@ -72,7 +76,10 @@ impl<'a> SearchDropdown<'a> {
         }
 
         if !current_segment.is_empty() {
-            spans.push(Span::styled(current_segment, highlight_style(current_is_matched)));
+            spans.push(Span::styled(
+                current_segment,
+                highlight_style(current_is_matched),
+            ));
         }
 
         spans
@@ -82,7 +89,9 @@ impl<'a> SearchDropdown<'a> {
 /// Get style for highlighted/non-highlighted text
 fn highlight_style(is_matched: bool) -> Style {
     if is_matched {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     }
@@ -130,12 +139,7 @@ impl<'a> Widget for SearchDropdown<'a> {
         if has_results && y < inner.y + inner.height {
             // Draw separator line
             let separator = "─".repeat(inner.width as usize);
-            buf.set_string(
-                inner.x,
-                y,
-                &separator,
-                Style::default().fg(Color::DarkGray),
-            );
+            buf.set_string(inner.x, y, &separator, Style::default().fg(Color::DarkGray));
             y += 1;
 
             // Calculate scroll offset to keep selected item visible
@@ -168,9 +172,17 @@ impl<'a> Widget for SearchDropdown<'a> {
 
                 // Show scroll indicators on first/last visible items
                 let prefix = if display_idx == 0 && has_more_above {
-                    if is_selected { "▲ " } else { "↑ " }
+                    if is_selected {
+                        "▲ "
+                    } else {
+                        "↑ "
+                    }
                 } else if display_idx == visible_count - 1 && has_more_below {
-                    if is_selected { "▼ " } else { "↓ " }
+                    if is_selected {
+                        "▼ "
+                    } else {
+                        "↓ "
+                    }
                 } else if is_selected {
                     "▶ "
                 } else {
