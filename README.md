@@ -61,6 +61,10 @@ Run inside a Git repository:
 keifu
 ```
 
+## Configuration
+
+See [docs/configuration.md](docs/configuration.md) for configuration options.
+
 ## Keybindings
 
 ### Navigation

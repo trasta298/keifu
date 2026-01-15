@@ -2,6 +2,7 @@
 
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use std::time::Instant;
 
 use anyhow::Result;
 use ratatui::widgets::ListState;
@@ -9,6 +10,7 @@ use ratatui::widgets::ListState;
 use git2::Oid;
 
 use crate::{
+    config::Config,
     action::Action,
     git::{
         build_graph,
@@ -188,11 +190,19 @@ pub struct App {
 
     // Async fetch
     fetch_receiver: Option<Receiver<Result<(), String>>>,
+
+    // Auto-refresh state
+    config: Config,
+    last_refresh_time: Instant,
+    last_fetch_time: Instant,
 }
 
 impl App {
     /// Create a new application
     pub fn new() -> Result<Self> {
+        let config = Config::load();
+        let now = Instant::now();
+
         let repo = GitRepository::discover()?;
         let repo_path = repo.path.clone();
         let head_name = repo.head_name();
@@ -241,6 +251,9 @@ impl App {
             message: None,
             message_time: None,
             fetch_receiver: None,
+            config,
+            last_refresh_time: now,
+            last_fetch_time: now,
         })
     }
 
@@ -383,10 +396,13 @@ impl App {
         self.fetch_receiver = None;
 
         match fetch_result {
-            Ok(()) => match self.refresh() {
-                Ok(()) => self.set_message("Fetched from origin"),
-                Err(e) => self.show_error(format!("Refresh failed: {}", e)),
-            },
+            Ok(()) => {
+                self.reset_timers();
+                match self.refresh() {
+                    Ok(()) => self.set_message("Fetched from origin"),
+                    Err(e) => self.show_error(format!("Refresh failed: {}", e)),
+                }
+            }
             Err(e) => self.show_error(e),
         }
     }
@@ -394,6 +410,56 @@ impl App {
     /// Check if fetch is currently in progress
     pub fn is_fetching(&self) -> bool {
         self.fetch_receiver.is_some()
+    }
+
+    /// Check and perform auto-refresh if interval has elapsed
+    pub fn check_auto_refresh(&mut self) {
+        if self.is_fetching() {
+            return;
+        }
+
+        let now = Instant::now();
+        let refresh_config = &self.config.refresh;
+
+        // Auto-fetch (check first as it includes refresh)
+        if refresh_config.auto_fetch
+            && now.duration_since(self.last_fetch_time).as_secs() >= refresh_config.fetch_interval
+        {
+            self.start_fetch(false);
+            return;
+        }
+
+        // Auto-refresh
+        if refresh_config.auto_refresh
+            && now.duration_since(self.last_refresh_time).as_secs() >= refresh_config.refresh_interval
+        {
+            let _ = self.refresh();
+            self.last_refresh_time = now;
+        }
+    }
+
+    /// Start fetch in background
+    /// If `show_message` is true, displays "Fetching from origin..."
+    fn start_fetch(&mut self, show_message: bool) {
+        let (tx, rx) = mpsc::channel();
+        let repo_path = self.repo_path.clone();
+
+        thread::spawn(move || {
+            let result = fetch_origin(&repo_path).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+
+        self.fetch_receiver = Some(rx);
+        if show_message {
+            self.set_message("Fetching from origin...");
+        }
+    }
+
+    /// Reset both timers (call after manual refresh/fetch)
+    fn reset_timers(&mut self) {
+        let now = Instant::now();
+        self.last_refresh_time = now;
+        self.last_fetch_time = now;
     }
 
     /// Set a status message (will auto-clear after a few seconds)
@@ -601,23 +667,12 @@ impl App {
             }
             Action::Refresh => {
                 self.refresh()?;
+                self.reset_timers();
             }
             Action::Fetch => {
-                // Don't start another fetch if one is already in progress
-                if self.fetch_receiver.is_some() {
-                    return Ok(());
+                if !self.is_fetching() {
+                    self.start_fetch(true);
                 }
-
-                let (tx, rx) = mpsc::channel();
-                let repo_path = self.repo_path.clone();
-
-                thread::spawn(move || {
-                    let result = fetch_origin(&repo_path).map_err(|e| e.to_string());
-                    let _ = tx.send(result);
-                });
-
-                self.fetch_receiver = Some(rx);
-                self.set_message("Fetching from origin...");
             }
             Action::Checkout => {
                 self.do_checkout()?;
