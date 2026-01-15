@@ -1,6 +1,7 @@
 //! keifu: a TUI tool that shows Git commit graphs
 
 use anyhow::Result;
+use clap::Parser;
 
 use keifu::{
     app::App,
@@ -9,7 +10,16 @@ use keifu::{
     tui, ui,
 };
 
+#[derive(Parser)]
+#[command(name = "keifu")]
+#[command(
+    version,
+    about = "A TUI tool to visualize Git commit graphs with branch genealogy"
+)]
+struct Cli {}
+
 fn main() -> Result<()> {
+    Cli::parse();
     // Restore the terminal on panic
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
