@@ -61,6 +61,10 @@ Git リポジトリ内で実行します:
 keifu
 ```
 
+## 設定
+
+設定オプションについては [configuration_ja.md](configuration_ja.md) を参照してください。
+
 ## キーバインド
 
 ### ナビゲーション

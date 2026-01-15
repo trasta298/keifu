@@ -43,6 +43,9 @@ fn main() -> Result<()> {
         // Check if async fetch has completed
         app.update_fetch_status();
 
+        // Auto-refresh check
+        app.check_auto_refresh();
+
         // Exit check
         if app.should_quit {
             break;
