@@ -19,7 +19,7 @@ use crate::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
             fetch_origin, merge_branch, rebase_branch,
         },
-        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository,
+        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository, WorkingTreeStatus,
     },
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
@@ -180,6 +180,8 @@ pub struct App {
     uncommitted_diff_cache: Option<CommitDiffInfo>,
     uncommitted_diff_loading: bool,
     uncommitted_diff_receiver: Option<Receiver<Option<CommitDiffInfo>>>,
+    /// Cache key: working tree status at the time of caching (for invalidation)
+    uncommitted_cache_key: Option<WorkingTreeStatus>,
 
     // Flags
     pub should_quit: bool,
@@ -247,6 +249,7 @@ impl App {
             uncommitted_diff_cache: None,
             uncommitted_diff_loading: false,
             uncommitted_diff_receiver: None,
+            uncommitted_cache_key: None,
             should_quit: false,
             message: None,
             message_time: None,
@@ -257,22 +260,39 @@ impl App {
         })
     }
 
+    /// Clear all diff caches
+    fn clear_all_diff_caches(&mut self) {
+        self.diff_cache = None;
+        self.diff_cache_oid = None;
+        self.diff_loading_oid = None;
+        self.diff_receiver = None;
+        self.clear_uncommitted_diff_cache();
+    }
+
+    /// Clear uncommitted diff cache only
+    fn clear_uncommitted_diff_cache(&mut self) {
+        self.uncommitted_diff_cache = None;
+        self.uncommitted_diff_loading = false;
+        self.uncommitted_diff_receiver = None;
+        self.uncommitted_cache_key = None;
+    }
+
     /// Refresh repository data
-    pub fn refresh(&mut self) -> Result<()> {
+    /// If `force` is true, always clears diff cache (for manual refresh)
+    /// If `force` is false, keeps cache when the same content is selected (for auto-refresh)
+    pub fn refresh(&mut self, force: bool) -> Result<()> {
         // Save the currently selected branch name for restoration
         let prev_branch_name = self
             .selected_branch_position
             .and_then(|pos| self.branch_positions.get(pos))
             .map(|(_, name)| name.clone());
 
+        // Get working tree status once and reuse
+        let working_tree_status = self.repo.get_working_tree_status().ok().flatten();
+        let uncommitted_count = working_tree_status.as_ref().map(|s| s.file_count);
+
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
-        let uncommitted_count = self
-            .repo
-            .get_working_tree_status()
-            .ok()
-            .flatten()
-            .map(|s| s.file_count);
         let head_commit_oid = self.repo.head_oid();
         self.graph_layout = build_graph(
             &self.commits,
@@ -296,14 +316,34 @@ impl App {
             }
         }
 
-        // Clear cache
-        self.diff_cache = None;
-        self.diff_cache_oid = None;
-        self.diff_loading_oid = None;
-        self.diff_receiver = None;
-        self.uncommitted_diff_cache = None;
-        self.uncommitted_diff_loading = false;
-        self.uncommitted_diff_receiver = None;
+        // Handle diff cache based on force flag
+        if force {
+            self.clear_all_diff_caches();
+        } else {
+            // Auto-refresh: smart cache - only clear if selection changed
+            let selected_node = self
+                .graph_list_state
+                .selected()
+                .and_then(|idx| self.graph_layout.nodes.get(idx));
+
+            let selected_oid = selected_node.and_then(|n| n.commit.as_ref()).map(|c| c.oid);
+            let is_uncommitted = selected_node.is_some_and(|n| n.is_uncommitted);
+
+            // Keep commit diff cache if the same commit is still selected
+            if self.diff_cache_oid != selected_oid {
+                self.diff_cache = None;
+                self.diff_cache_oid = None;
+                self.diff_loading_oid = None;
+                self.diff_receiver = None;
+            }
+
+            // Keep uncommitted diff cache only if:
+            // 1. Uncommitted node is still selected
+            // 2. The working tree status hasn't changed (same files and mtimes)
+            if !is_uncommitted || self.uncommitted_cache_key != working_tree_status {
+                self.clear_uncommitted_diff_cache();
+            }
+        }
 
         // Clear search state on refresh to avoid stale indices
         self.search_state = SearchState::default();
@@ -398,7 +438,7 @@ impl App {
         match fetch_result {
             Ok(()) => {
                 self.reset_timers();
-                match self.refresh() {
+                match self.refresh(true) {
                     Ok(()) => self.set_message("Fetched from origin"),
                     Err(e) => self.show_error(format!("Refresh failed: {}", e)),
                 }
@@ -433,7 +473,7 @@ impl App {
         if refresh_config.auto_refresh
             && now.duration_since(self.last_refresh_time).as_secs() >= refresh_config.refresh_interval
         {
-            let _ = self.refresh();
+            let _ = self.refresh(false);
             self.last_refresh_time = now;
         }
     }
@@ -533,6 +573,13 @@ impl App {
             // Compute uncommitted diff in the background
             let (tx, rx) = mpsc::channel();
             let repo_path = self.repo_path.clone();
+
+            // Save current working tree status as cache key before starting computation
+            self.uncommitted_cache_key = self
+                .repo
+                .get_working_tree_status()
+                .ok()
+                .flatten();
 
             self.uncommitted_diff_loading = true;
             self.uncommitted_diff_receiver = Some(rx);
@@ -666,7 +713,7 @@ impl App {
                 self.mode = AppMode::Help;
             }
             Action::Refresh => {
-                self.refresh()?;
+                self.refresh(true)?;
                 self.reset_timers();
             }
             Action::Fetch => {
@@ -760,7 +807,7 @@ impl App {
                             if let Some(node) = self.selected_commit_node() {
                                 if let Some(commit) = &node.commit {
                                     create_branch(&self.repo.repo, &input, commit.oid)?;
-                                    self.refresh()?;
+                                    self.refresh(true)?;
                                 }
                             }
                         }
@@ -866,7 +913,7 @@ impl App {
                         rebase_branch(&self.repo.repo, &name)?;
                     }
                 }
-                self.refresh()?;
+                self.refresh(true)?;
                 self.mode = AppMode::Normal;
             }
             Action::Cancel => {
@@ -1026,11 +1073,11 @@ impl App {
             } else {
                 checkout_branch(&self.repo.repo, &branch_name)?;
             }
-            self.refresh()?;
+            self.refresh(true)?;
         } else if let Some(node) = self.selected_commit_node() {
             if let Some(commit) = &node.commit {
                 checkout_commit(&self.repo.repo, commit.oid)?;
-                self.refresh()?;
+                self.refresh(true)?;
             }
         }
         Ok(())

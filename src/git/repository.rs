@@ -1,6 +1,7 @@
 //! Repository operation wrapper
 
 use std::path::Path;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use git2::Repository;
@@ -95,44 +96,70 @@ impl GitRepository {
 
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
-        let mut file_count = 0;
+        let mut file_paths = Vec::new();
 
         for entry in statuses.iter() {
             let status = entry.status();
 
             // Staged changes (INDEX_*)
-            if status.intersects(
+            let is_staged = status.intersects(
                 git2::Status::INDEX_NEW
                     | git2::Status::INDEX_MODIFIED
                     | git2::Status::INDEX_DELETED
                     | git2::Status::INDEX_RENAMED
                     | git2::Status::INDEX_TYPECHANGE,
-            ) {
-                file_count += 1;
-                continue; // Count each file only once
-            }
+            );
 
             // Unstaged changes (WT_*)
-            if status.intersects(
+            let is_unstaged = status.intersects(
                 git2::Status::WT_MODIFIED
                     | git2::Status::WT_DELETED
                     | git2::Status::WT_RENAMED
                     | git2::Status::WT_TYPECHANGE,
-            ) {
-                file_count += 1;
+            );
+
+            if is_staged || is_unstaged {
+                if let Some(path) = entry.path() {
+                    file_paths.push(path.to_string());
+                }
             }
         }
 
-        if file_count > 0 {
-            Ok(Some(WorkingTreeStatus { file_count }))
-        } else {
+        if file_paths.is_empty() {
             Ok(None)
+        } else {
+            file_paths.sort();
+            let file_count = file_paths.len();
+
+            // Compute mtime hash from all changed files
+            let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
+            let mtime_hash: u128 = file_paths
+                .iter()
+                .filter_map(|path| {
+                    let full_path = workdir.join(path);
+                    std::fs::metadata(&full_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis())
+                })
+                .sum();
+
+            Ok(Some(WorkingTreeStatus {
+                file_count,
+                file_paths,
+                mtime_hash,
+            }))
         }
     }
 }
 
 /// Working tree status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkingTreeStatus {
     pub file_count: usize,
+    /// Sorted list of file paths with changes (used as cache key)
+    pub file_paths: Vec<String>,
+    /// Sum of file mtimes in milliseconds (used as cache key for content changes)
+    pub mtime_hash: u128,
 }
