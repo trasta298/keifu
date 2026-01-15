@@ -135,6 +135,8 @@ jobs:
         with:
           config: cliff.toml
           args: --latest --strip header
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2

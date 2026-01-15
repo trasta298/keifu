@@ -1,35 +1,80 @@
+[remote.github]
+owner = "trasta298"
+repo = "keifu"
+
 [changelog]
 header = """
 # Changelog\n
 """
 body = """
-{% for group, commits in commits | group_by(attribute="group") %}
+{%- for group, group_commits in commits | group_by(attribute="group") %}
+{%- set merge_commits = group_commits | filter(attribute="merge_commit", value=true) %}
+{%- if merge_commits | length > 0 %}
 ### {{ group | upper_first }}
-{% for commit in commits %}
-- {{ commit.message | upper_first }}\
-{% endfor %}
-{% endfor %}
+{% for commit in merge_commits %}
+- {{ commit.remote.pr_title | split(pat="\n") | first | upper_first }} ([#{{ commit.remote.pr_number }}](https://github.com/trasta298/keifu/pull/{{ commit.remote.pr_number }}))
+{%- endfor %}
+{% endif %}
+{%- endfor %}
 """
 footer = ""
 trim = true
 
 [git]
 conventional_commits = true
-filter_unconventional = true
+filter_unconventional = false
 split_commits = false
-commit_preprocessors = []
+commit_preprocessors = [
+  # Remove Co-Authored-By lines
+  { pattern = "\n*Co-Authored-By:.*", replace = "" },
+  # Remove Claude Code signature
+  { pattern = "\n*🤖 Generated with \\[Claude Code\\].*", replace = "" },
+  # Remove trailing whitespace and empty lines at the end
+  { pattern = "\\s+$", replace = "" },
+]
 commit_parsers = [
-  { message = "^feat", group = "Features" },
-  { message = "^fix", group = "Bug Fixes" },
-  { message = "^doc", group = "Documentation" },
-  { message = "^docs", group = "Documentation" },
-  { message = "^perf", group = "Performance" },
-  { message = "^refactor", group = "Refactoring" },
-  { message = "^style", group = "Styling" },
-  { message = "^test", group = "Testing" },
+  # Skip release version bumps and WIP
+  { message = "^🔖", skip = true },
   { message = "^chore\\(release\\)", skip = true },
-  { message = "^chore", group = "Miscellaneous" },
-  { message = "^ci", group = "CI/CD" },
+  { message = "^🚧", skip = true },
+  # Group merge commits by PR title pattern
+  { field = "remote.pr_title", pattern = "^✨|^feat", group = "✨ Features" },
+  { field = "remote.pr_title", pattern = "^🐛|^fix", group = "🐛 Bug Fixes" },
+  { field = "remote.pr_title", pattern = "^📝|^docs?", group = "📝 Documentation" },
+  { field = "remote.pr_title", pattern = "^♻️|^refactor", group = "♻️ Refactoring" },
+  { field = "remote.pr_title", pattern = "^🎨|^style", group = "🎨 Styling" },
+  { field = "remote.pr_title", pattern = "^⚡|^perf", group = "⚡ Performance" },
+  { field = "remote.pr_title", pattern = "^🧪|^test", group = "🧪 Testing" },
+  { field = "remote.pr_title", pattern = "^👷|^ci", group = "👷 CI/CD" },
+  { field = "remote.pr_title", pattern = "^🔒", group = "🔒 Security" },
+  { field = "remote.pr_title", pattern = "^🔧|^chore", group = "🔧 Miscellaneous" },
+  { field = "remote.pr_title", pattern = "^🗑️", group = "🗑️ Removed" },
+  { field = "remote.pr_title", pattern = ".*", group = "📦 Other" },
+  # Non-merge commits: emoji prefix (gitmoji style)
+  { message = "^✨", group = "✨ Features" },
+  { message = "^🐛", group = "🐛 Bug Fixes" },
+  { message = "^📝", group = "📝 Documentation" },
+  { message = "^♻️", group = "♻️ Refactoring" },
+  { message = "^🎨", group = "🎨 Styling" },
+  { message = "^⚡", group = "⚡ Performance" },
+  { message = "^🧪", group = "🧪 Testing" },
+  { message = "^👷", group = "👷 CI/CD" },
+  { message = "^🔒", group = "🔒 Security" },
+  { message = "^🔧", group = "🔧 Configuration" },
+  { message = "^📄", group = "📝 Documentation" },
+  { message = "^🗑️", group = "🗑️ Removed" },
+  # Non-merge commits: conventional commits
+  { message = "^feat", group = "✨ Features" },
+  { message = "^fix", group = "🐛 Bug Fixes" },
+  { message = "^docs?", group = "📝 Documentation" },
+  { message = "^perf", group = "⚡ Performance" },
+  { message = "^refactor", group = "♻️ Refactoring" },
+  { message = "^style", group = "🎨 Styling" },
+  { message = "^test", group = "🧪 Testing" },
+  { message = "^ci", group = "👷 CI/CD" },
+  { message = "^chore", group = "🔧 Miscellaneous" },
+  # Catch-all
+  { message = ".*", group = "📦 Other" },
 ]
 filter_commits = false
 tag_pattern = "v[0-9].*"
