@@ -15,7 +15,7 @@ keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit grap
 - **Fast branch switching** — With AI-assisted coding, working on multiple branches in parallel has become common. keifu makes branch switching quick and visual
 - **Keep it simple** — Only basic Git operations are supported; this is not a full-featured Git client
 - **Narrow terminal friendly** — Works well in split panes and small windows
-- **Sixel support** — Compatible with Windows Terminal and other Sixel-capable terminals
+- **No image protocol required** — Works on any terminal with Unicode support
 
 ## Features
 
