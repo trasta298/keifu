@@ -46,6 +46,12 @@ cargo install keifu
 mise use -g github:trasta298/keifu@latest
 ```
 
+### Homebrew を使う
+
+```bash
+brew install trasta298/tap/keifu
+```
+
 ### ソースから
 
 ```bash

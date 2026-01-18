@@ -12,7 +12,7 @@ keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit grap
 ## Motivation
 
 - **Readable commit graph** — `git log --graph` is hard to read; keifu renders a cleaner, color-coded graph
-- **Fast branch switching** — With AI-assisted coding, working on multiple branches in parallel has become common. keifu makes branch switching quick and visual
+- **Fast branch switching** — With the rise of vibe coding, working on multiple branches in parallel has become common. keifu makes branch switching quick and visual
 - **Keep it simple** — Only basic Git operations are supported; this is not a full-featured Git client
 - **Narrow terminal friendly** — Works well in split panes and small windows
 - **No image protocol required** — Works on any terminal with Unicode support
@@ -44,6 +44,12 @@ cargo install keifu
 
 ```bash
 mise use -g github:trasta298/keifu@latest
+```
+
+### With Homebrew
+
+```bash
+brew install trasta298/tap/keifu
 ```
 
 ### From source
