@@ -4,8 +4,8 @@ use anyhow::Result;
 use clap::Parser;
 
 use keifu::{
-    app::App,
-    event::{get_key_event, poll_event},
+    app::{App, AppMode},
+    event::{coalesce_scroll_events, drain_events, get_key_event, scroll_delta_to_action},
     keybindings::map_key_to_action,
     tui, ui,
 };
@@ -51,17 +51,28 @@ fn main() -> Result<()> {
             break;
         }
 
-        // Event handling
-        if let Some(event) = poll_event()? {
-            if let Some(key) = get_key_event(&event) {
+        // Event handling - drain all pending events to prevent accumulation
+        let events = drain_events()?;
+
+        // Process keyboard events
+        for event in &events {
+            if let Some(key) = get_key_event(event) {
                 if let Some(action) = map_key_to_action(key, &app.mode) {
                     if let Err(e) = app.handle_action(action) {
-                        // Show errors in the UI
                         app.show_error(format!("{}", e));
                     }
                 }
             }
-            // Resize events trigger redraw automatically
+        }
+
+        // Coalesce and process scroll events (Normal mode only)
+        if matches!(app.mode, AppMode::Normal) {
+            let scroll_delta = coalesce_scroll_events(&events);
+            if let Some(action) = scroll_delta_to_action(scroll_delta) {
+                if let Err(e) = app.handle_action(action) {
+                    app.show_error(format!("{}", e));
+                }
+            }
         }
     }
 
