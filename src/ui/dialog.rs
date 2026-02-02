@@ -131,7 +131,7 @@ impl<'a> Widget for BranchInfoPopup<'a> {
         let block = Block::default()
             .title(" Branches ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue))
+            .border_style(Style::default().fg(Color::DarkGray))
             .style(Style::default().bg(Color::Black));
 
         let inner = block.inner(area);

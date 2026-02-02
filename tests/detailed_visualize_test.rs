@@ -4,6 +4,7 @@ use chrono::Local;
 use git2::Oid;
 use keifu::git::{build_horizontal_graph, BranchInfo, CommitInfo};
 use keifu::git::graph::HorizontalCellType;
+use keifu::git::graph::CompressionMode;
 
 fn make_oid(id: &str) -> Oid {
     let hash = format!(
@@ -53,6 +54,8 @@ fn widget_cell_to_char(cell: &HorizontalCellType, is_selected: bool) -> (char, &
         HorizontalCellType::TeeLeft(ci) => ('┤', *ci),
         HorizontalCellType::TeeRight(ci) => ('├', *ci),
         HorizontalCellType::Cross(_, pci) => ('┼', *pci),
+        HorizontalCellType::Compressed(count, pci) => (char::from_digit((*count as u32) % 10, 10).unwrap_or('.'), *pci),
+        HorizontalCellType::CornerTopLeft(pci) => ('┌', *pci),
     };
 
     let color_name = match color_idx {
@@ -144,7 +147,7 @@ fn test_detailed_visualize_simple_linear() {
     ];
     let branches = vec![make_branch("main", "c3", true)];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
@@ -185,7 +188,7 @@ fn test_detailed_visualize_branch_and_merge() {
         make_branch("feature", "e", false),
     ];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
@@ -221,7 +224,7 @@ fn test_detailed_visualize_merge_commit() {
         make_branch("feature", "c", false),
     ];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);

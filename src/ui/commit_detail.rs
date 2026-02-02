@@ -61,29 +61,40 @@ impl<'a> CommitDetailWidget<'a> {
             }
             SelectedNode::Commit(commit) => {
                 // Build commit detail lines
-                let mut lines = vec![
-                    // Commit hash
-                    Line::from(vec![
-                        Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
-                    ]),
-                    // Author
-                    Line::from(vec![
-                        Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(
-                            format!("{} <{}>", commit.author_name, commit.author_email),
-                            Style::default().fg(Color::Blue),
-                        ),
-                    ]),
-                    // Date
-                    Line::from(vec![
-                        Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(
-                            commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]),
-                ];
+                let mut lines = Vec::new();
+
+                // Commit hash
+                lines.push(Line::from(vec![
+                    Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
+                ]));
+
+                // Branch
+                let branches = app.selected_node_lane_branches();
+                if !branches.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Branch: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(branches.join(", "), Style::default().fg(Color::Green)),
+                    ]));
+                }
+
+                // Author
+                lines.push(Line::from(vec![
+                    Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("{} <{}>", commit.author_name, commit.author_email),
+                        Style::default().fg(Color::Blue),
+                    ),
+                ]));
+
+                // Date
+                lines.push(Line::from(vec![
+                    Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
 
                 // Parent commits
                 if !commit.parent_oids.is_empty() {

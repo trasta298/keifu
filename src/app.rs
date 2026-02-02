@@ -19,6 +19,7 @@ use crate::{
             GraphLayout,
             GraphOrientation,
             HorizontalGraphLayout,
+            CompressionMode,
         },
         operations::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
@@ -181,6 +182,8 @@ pub struct App {
     pub show_tags: bool,
     /// Whether to show the sidebar (legend) in horizontal view
     pub show_sidebar: bool,
+    /// Horizontal graph compression mode
+    pub compression_mode: CompressionMode,
 
     // UI state
     pub graph_list_state: ListState,
@@ -286,6 +289,7 @@ impl App {
                 uncommitted_count,
                 head_commit_oid,
                 80, // Default terminal width
+                CompressionMode::default(),
             ))
         } else {
             None
@@ -305,6 +309,7 @@ impl App {
             horizontal_graph_width: 80, // Initial default, updated on first render
             show_tags: true, // Tags are shown by default
             show_sidebar: true, // Sidebar is shown by default
+            compression_mode: CompressionMode::default(),
             graph_list_state,
             branch_positions,
             selected_branch_position,
@@ -368,6 +373,7 @@ impl App {
                 uncommitted_count,
                 head_commit_oid,
                 new_width,
+                self.compression_mode,
             ));
         }
     }
@@ -920,6 +926,38 @@ impl App {
                     self.set_message("Sidebar: OFF");
                 }
             }
+            Action::ToggleCompression => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.compression_mode = self.compression_mode.next();
+                    self.set_message(format!("Compression: {:?}", self.compression_mode));
+                    
+                    // Rebuild layout
+                    let uncommitted_count = self
+                        .repo
+                        .get_working_tree_status()
+                        .ok()
+                        .flatten()
+                        .map(|s| s.file_count);
+                    let head_commit_oid = self.repo.head_oid();
+
+                    self.horizontal_layout = Some(build_horizontal_graph(
+                        &self.commits,
+                        &self.branches,
+                        &self.tags,
+                        uncommitted_count,
+                        head_commit_oid,
+                        self.horizontal_graph_width,
+                        self.compression_mode,
+                    ));
+                    
+                    // We might need to adjust selection if it was on a compressed node, 
+                    // but since compressed nodes aren't selectable (they are just dots), 
+                    // we should be fine or snap to nearest.
+                    self.snap_to_nearest_commit();
+                } else {
+                    self.set_message("Compression only available in horizontal mode");
+                }
+            }
             Action::Refresh => {
                 self.refresh(true)?;
                 self.reset_timers();
@@ -1310,6 +1348,30 @@ impl App {
         }
     }
 
+    /// Get names of branches associated with the selected node's lane
+    /// For Horizontal: Returns the branches assigned to the current lane
+    /// For Vertical: Returns branches pointing to the current commit (tips only)
+    pub fn selected_node_lane_branches(&self) -> Vec<String> {
+        match self.current_orientation {
+            GraphOrientation::Vertical => {
+                if let Some(node) = self.selected_commit_node() {
+                    node.branch_names.clone()
+                } else {
+                    Vec::new()
+                }
+            }
+            GraphOrientation::Horizontal => {
+                if let Some(layout) = &self.horizontal_layout {
+                    let lane_idx = layout.selection.lane;
+                    if let Some(lane_info) = layout.lanes.iter().find(|l| l.lane == lane_idx) {
+                        return lane_info.branch_names.clone();
+                    }
+                }
+                Vec::new()
+            }
+        }
+    }
+
     fn do_checkout(&mut self) -> Result<()> {
         if let Some(branch) = self.selected_branch() {
             let branch_name = branch.name.clone();
@@ -1564,6 +1626,7 @@ impl App {
                     uncommitted_count,
                     head_commit_oid,
                     80, // Placeholder, will be rebuilt with actual width on first render
+                    self.compression_mode,
                 ));
             }
         }

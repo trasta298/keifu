@@ -20,15 +20,23 @@ pub struct HorizontalGraphViewWidget<'a> {
     pub terminal_width: usize,
     pub terminal_height: usize,
     pub show_tags: bool,
+    pub compression_mode: crate::git::graph::CompressionMode,
 }
 
 impl<'a> HorizontalGraphViewWidget<'a> {
-    pub fn new(layout: &'a HorizontalGraphLayout, width: usize, height: usize, show_tags: bool) -> Self {
+    pub fn new(
+        layout: &'a HorizontalGraphLayout, 
+        width: usize, 
+        height: usize, 
+        show_tags: bool,
+        compression_mode: crate::git::graph::CompressionMode,
+    ) -> Self {
         Self {
             layout,
             terminal_width: width,
             terminal_height: height,
             show_tags,
+            compression_mode,
         }
     }
 }
@@ -299,6 +307,28 @@ impl<'a> HorizontalGraphViewWidget<'a> {
         // Middle position (Connector)
         let middle_char = if is_commit {
             connector_char
+        } else if let HorizontalCellType::Compressed(count, _) = cell {
+            // Logic to display count... 
+            // If count < 10, display digit? 
+            // If count > 9, how to display?
+            // "1" "9", or ".." (if mode is Short?)
+            match self.compression_mode {
+                crate::git::graph::CompressionMode::Short => '·',
+                _ => {
+                    if *count < 10 {
+                        // Display the digit as the "connector" char? No, main char is first.
+                        // cell_to_char returns (main, clr).
+                        // If cell_to_char returns '·' for main, here we set second char.
+                        // If count < 10: "·N"
+                        char::from_digit(*count as u32, 10).unwrap_or('?')
+                    } else if *count < 100 {
+                        // Display second digit
+                        char::from_digit((*count as u32) % 10, 10).unwrap_or('?')
+                    } else {
+                        '.'
+                    }
+                }
+            }
         } else if main_char == '─' || main_char == '┼' || main_char == '┬' || main_char == '┴' || main_char == '├' || main_char == '╭' || main_char == '╰' {
              '─'
         } else {
@@ -329,7 +359,8 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeRight(_) | // ├
             HorizontalCellType::Cross(_, _) | // ┼
-            HorizontalCellType::Commit(_) => true, // Commits can connect right
+            HorizontalCellType::Commit(_) |
+            HorizontalCellType::Compressed(_, _) => true, // Commits/Compressed can connect right
             _ => false,
         }
     }
@@ -343,7 +374,8 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeLeft(_) |  // ┤
             HorizontalCellType::Cross(_, _) |
-            HorizontalCellType::Commit(_) => true,
+            HorizontalCellType::Commit(_) |
+            HorizontalCellType::Compressed(_, _) => true,
             _ => false,
         }
     }
@@ -363,6 +395,24 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeLeft(c) => ('┤', *c),
             HorizontalCellType::TeeRight(c) => ('├', *c),
             HorizontalCellType::Cross(v, _) => ('┼', *v),
+            HorizontalCellType::CornerTopLeft(c) => ('┌', *c),
+            HorizontalCellType::Compressed(count, c) => {
+                match self.compression_mode {
+                    crate::git::graph::CompressionMode::Short => ('·', *c),
+                    _ => {
+                        // On mode:
+                        // If count < 10, first char is '·', second is N
+                        // If count < 100, first char is tens digit, second is ones digit
+                        if *count < 10 {
+                            ('·', *c)
+                        } else if *count < 100 {
+                            (char::from_digit((*count as u32) / 10, 10).unwrap_or('?'), *c)
+                        } else {
+                            ('.', *c)
+                        }
+                    }
+                }
+            }
         };
         (ch, get_color_by_index(color_idx))
     }

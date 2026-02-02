@@ -36,6 +36,7 @@ pub enum Action {
     ToggleOrientation,
     ToggleTags,
     ToggleSidebar,
+    ToggleCompression,
     Search,
     Refresh,
     Quit,

@@ -5,6 +5,7 @@ use chrono::Local;
 use git2::Oid;
 use keifu::git::{build_horizontal_graph, BranchInfo, CommitInfo};
 use keifu::git::graph::HorizontalCellType;
+use keifu::git::graph::CompressionMode;
 
 fn make_oid(id: &str) -> Oid {
     // Convert id into a 40-char hex hash
@@ -54,6 +55,8 @@ fn cell_to_char(cell: &HorizontalCellType) -> char {
         HorizontalCellType::TeeLeft(_) => '┤',
         HorizontalCellType::TeeRight(_) => '├',
         HorizontalCellType::Cross(_, _) => '┼',
+        HorizontalCellType::Compressed(count, _) => char::from_digit((*count as u32) % 10, 10).unwrap_or('.'),
+        HorizontalCellType::CornerTopLeft(_) => '┌',
     }
 }
 
@@ -100,7 +103,7 @@ fn test_visualize_simple_linear() {
     ];
     let branches = vec![make_branch("main", "c3", true)];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
@@ -133,7 +136,7 @@ fn test_visualize_branch_and_merge() {
         make_branch("feature", "e", false),
     ];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
@@ -163,7 +166,7 @@ fn test_visualize_multiple_branches() {
         make_branch("dev", "e", false),
     ];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
@@ -192,7 +195,7 @@ fn test_visualize_narrow_terminal() {
     let branches = vec![make_branch("main", "c10", true)];
 
     // Narrow terminal should create multiple chunks
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 12);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 12, CompressionMode::default());
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);

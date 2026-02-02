@@ -161,23 +161,11 @@ fn render_branch_info_popup(frame: &mut Frame, app: &App, graph_area: Rect) {
         .unwrap_or(10);
     let popup_width = (max_branch_len + 6).min(50) as u16;
 
-    // Calculate selected row's screen position (add 1 for border)
-    let selected_idx = app.graph_list_state.selected().unwrap_or(0);
-    let offset = app.graph_list_state.offset();
-    let selected_screen_y = graph_area.y + 1 + selected_idx.saturating_sub(offset) as u16;
 
-    // Position popup at right side of graph area
-    let popup_x = graph_area.x + graph_area.width.saturating_sub(popup_width + 2);
-    let default_popup_y = graph_area.y + 1;
 
-    // Shift down only if popup overlaps with selected row
-    let overlaps_selected =
-        selected_screen_y >= default_popup_y && selected_screen_y < default_popup_y + popup_height;
-    let popup_y = if overlaps_selected {
-        (selected_screen_y + 1).min(graph_area.y + graph_area.height - popup_height)
-    } else {
-        default_popup_y
-    };
+    // Position popup at bottom right of graph area
+    let popup_x = graph_area.x + graph_area.width.saturating_sub(popup_width + 1);
+    let popup_y = graph_area.y + graph_area.height.saturating_sub(popup_height + 1);
 
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
     frame.render_widget(
@@ -279,6 +267,7 @@ fn draw_horizontal_layout(frame: &mut Frame, app: &mut App) {
             graph_area.width as usize,
             graph_area.height as usize,
             app.show_tags,
+            app.compression_mode,
         );
 
         let mut state = HorizontalGraphState {

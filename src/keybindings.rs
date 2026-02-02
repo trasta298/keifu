@@ -85,6 +85,7 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::SHIFT, KeyCode::Char('O')) => Some(Action::ToggleOrientation),
         (KeyModifiers::NONE, KeyCode::Char('t')) => Some(Action::ToggleTags),
         (KeyModifiers::NONE, KeyCode::Char('s')) => Some(Action::ToggleSidebar),
+        (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::ToggleCompression),
         (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             Some(Action::Quit)

@@ -72,6 +72,25 @@ pub enum GraphOrientation {
     Horizontal, // New: commits left-to-right in chunks
 }
 
+/// Compression mode for horizontal graph
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompressionMode {
+    #[default]
+    Off,
+    On,
+    Short,
+}
+
+impl CompressionMode {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Off => Self::On,
+            Self::On => Self::Short,
+            Self::Short => Self::Off,
+        }
+    }
+}
+
 /// A horizontal position in the graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HorizontalPosition {
@@ -94,6 +113,8 @@ pub enum HorizontalCellType {
     Commit(usize),          // ●
     Pipe(usize),            // │
     HLine(usize),           // ─
+    Compressed(usize, usize), // (count, color_index)
+    CornerTopLeft(usize),   // ┌
     JumpUp(usize),          // ╰ Left-to-Up
     JumpDown(usize),        // ╭ Left-to-Down
     HookUp(usize),          // ╯ Right-to-Up
@@ -191,6 +212,7 @@ pub fn build_horizontal_graph(
     _uncommitted_count: Option<usize>,
     head_commit_oid: Option<Oid>,
     terminal_width: usize,
+    compression_mode: CompressionMode,
 ) -> HorizontalGraphLayout {
     // Phase 1: Swimlane Assignment
     let (commit_lane_map, lane_colors, num_lanes, lane_branches) = assign_lanes(commits, branches);
@@ -202,46 +224,161 @@ pub fn build_horizontal_graph(
         .unwrap_or(0);
 
     // Phase 2: Sparse Grid Construction & Routing
-    // We used a HashMap for sparse grid: (lane, col) -> Cell
     let mut grid: HashMap<(usize, usize), HorizontalCellType> = HashMap::new();
     let mut commit_grid: HashMap<(usize, usize), CommitInfo> = HashMap::new();
-    
-    // Track occupied columns to implement "Column Reservation"
     let mut col_has_node: HashSet<usize> = HashSet::new();
 
-    // 2.1 Place Commits (Nodes)
-    // Basic placement: X = index (0 = old, N = new)
-    // We will expand gaps later if needed, but for now let's place them densely
-    // Note: commits are sorted Newest -> Oldest. 
-    // We want Left -> Right to be Oldest -> Newest.
-    let _num_raw_commits = commits.len();
+    // 2.0 Identify compressible commits
+    // Build parent->children map
+    let mut parent_children: HashMap<Oid, Vec<Oid>> = HashMap::new();
+    let oid_set: HashSet<Oid> = commits.iter().map(|c| c.oid).collect();
+    for commit in commits {
+        for parent_oid in &commit.parent_oids {
+            if oid_set.contains(parent_oid) {
+                parent_children.entry(*parent_oid).or_default().push(commit.oid);
+            }
+        }
+    }
+
+    // Identify interesting commits (cannot be compressed)
+    let mut interesting_oids: HashSet<Oid> = HashSet::new();
+    // - Fork/Merge points
+    for commit in commits {
+        if commit.parent_oids.len() > 1 {
+            interesting_oids.insert(commit.oid);
+            for p in &commit.parent_oids { interesting_oids.insert(*p); } // Parents of merge often interesting? Maybe not strictly necessary if linear.
+        }
+        if let Some(children) = parent_children.get(&commit.oid) {
+            if children.len() > 1 {
+                interesting_oids.insert(commit.oid);
+            }
+        }
+    }
+    // - Branch tips
+    for b in branches {
+        interesting_oids.insert(b.tip_oid);
+    }
+    // - Tags
+    for t in tags {
+        interesting_oids.insert(t.target_oid);
+    }
+    // - HEAD
+    if let Some(h) = head_commit_oid {
+        interesting_oids.insert(h);
+    }
+    // - First and Last visible commits (to avoid dangling ends)
+    if let Some(first) = commits.first() { interesting_oids.insert(first.oid); }
+    if let Some(last) = commits.last() { interesting_oids.insert(last.oid); }
+
+    // Helper to check if compressible
+    let is_compressible = |oid: Oid| -> bool {
+        !interesting_oids.contains(&oid) && compression_mode != CompressionMode::Off
+    };
+
+    // 2.1 Place Commits (Nodes) with Compression
     let mut commit_x_map: HashMap<Oid, usize> = HashMap::new();
     
-    // Spaced placement: Each commit at x = idx * 2, leaving gaps for connectors
-    // This implements the "Column Reservation" rule from the design plan:
-    // A column can contain EITHER Nodes OR Connectors, not both.
-    // turn_x = p_x + 1 will land in the empty gap columns.
-    for (idx, commit) in commits.iter().rev().enumerate() {
-        let x = idx * 2;  // Spaced: commits at even columns, connectors at odd
-        let lane = *commit_lane_map.get(&commit.oid).unwrap_or(&0);
-        let color = *lane_colors.get(&lane).unwrap_or(&0);
-        
-        grid.insert((lane, x), HorizontalCellType::Commit(color));
-        commit_grid.insert((lane, x), commit.clone());
-        col_has_node.insert(x);
-        commit_x_map.insert(commit.oid, x);
-    }
+    // We iterate Oldest -> Newest (commits.rev)
+    let mut current_x = 0;
     
+    // Iterate rev() but we need to identify groups. 
+    // Groups are contiguous sequences in the rev() iteration.
+    
+    // We'll collect (Oid, Lane, Color) tuples to iterate
+    let nodes: Vec<_> = commits.iter().rev().map(|c| {
+        let lane = *commit_lane_map.get(&c.oid).unwrap_or(&0);
+        let color = *lane_colors.get(&lane).unwrap_or(&0);
+        (c, lane, color)
+    }).collect();
+
+    let mut idx = 0;
+    while idx < nodes.len() {
+        let (commit, lane, color) = nodes[idx];
+        
+        if is_compressible(commit.oid) {
+            // Start of a potential compressed block
+            // Look ahead to find how many compressible commits are in this sequence
+            let mut count = 1;
+            let mut j = idx + 1;
+            while j < nodes.len() {
+                let (next_c, next_lane, _) = nodes[j];
+                // Must be compressible AND on the same lane to be grouped
+                if is_compressible(next_c.oid) && next_lane == lane {
+                    count += 1;
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            
+            // Check if we should compress this group
+            // For Short mode, maybe we strictly collapse > 2? 
+            // The user req says "ON mode: ...19..." or "SHORT: ...". 
+            // Let's assume On/Short both compress any sequence >= 1?
+            // "OFF mode: ●───●" (1 commit)
+            // If I have A -> B -> C. B is compressible.
+            // A -> ... -> C.
+            // If I just have A->B (end). B is compressible? No, B is last commit, so interesting.
+            
+            // If count is small (e.g. 1), maybe don't compress?
+            // But user might want to hide even single trivial commits.
+            // Let's compress if count >= 1.
+            
+            // In Short mode, user asked "ON mode (can we support three modes: ON/OFF/SHORT?): ●───...19...───● or ●─...─●"
+            // Let's interpret:
+            // ON: Show count "19"
+            // SHORT: Show just dot or shorter symbol? Or maybe "ON" uses more width?
+            // For now, struct is same, rendering differs. Or cell type varies.
+            
+            let x = current_x;
+            // Record map for all compressed commits
+            for k in 0..count {
+                let (c, _, _) = nodes[idx + k];
+                commit_x_map.insert(c.oid, x);
+                // We do NOT add to commit_grid for compressed nodes (they are not selectable/visible individually)
+                // OR we do, but they overlap? If we add to commit_grid, selection might pick them up.
+                // Better to NOT add keys to commit_grid for hidden commits.
+            }
+            
+            grid.insert((lane, x), HorizontalCellType::Compressed(count, color));
+            col_has_node.insert(x);
+            
+            // Advance
+            idx += count;
+        } else {
+            // Normal visible commit
+            let x = current_x;
+            commit_x_map.insert(commit.oid, x);
+            grid.insert((lane, x), HorizontalCellType::Commit(color));
+            commit_grid.insert((lane, x), commit.clone());
+            col_has_node.insert(x);
+            idx += 1;
+        }
+        
+        // Always space for connector after node (visible or compressed)
+        current_x += 2;
+    }
+
     // 2.2 Route Connections
-    // Iterate from Oldest to Newest (Left to Right)
     for (_idx, commit) in commits.iter().rev().enumerate() {
         let child_oid = commit.oid;
-        let child_x = *commit_x_map.get(&child_oid).unwrap();
+        
+        // Skip routing if child is not in map (shouldn't happen)
+        let child_x = match commit_x_map.get(&child_oid) {
+            Some(&x) => x,
+            None => continue,
+        };
         let child_lane = *commit_lane_map.get(&child_oid).unwrap_or(&0);
         
         for parent_oid in &commit.parent_oids {
             if let Some(&parent_x) = commit_x_map.get(parent_oid) {
                  let parent_lane = *commit_lane_map.get(parent_oid).unwrap_or(&0);
+                 
+                 // If both are in same compressed block (same X, same lane), do NOT route
+                 if child_x == parent_x && child_lane == parent_lane {
+                     continue;
+                 }
+                 
                  route_connection(
                      parent_x, parent_lane,
                      child_x, child_lane,
@@ -252,8 +389,8 @@ pub fn build_horizontal_graph(
             }
         }
     }
-    
-    // Phase 3: Chunking (pass tags and main_lane for tag positioning)
+
+    // Phase 3: Chunking
     chunk_grid(
         grid, 
         commit_grid, 
@@ -1488,37 +1625,7 @@ mod tests {
     use super::*;
     use git2::Oid;
     use chrono::Local;
-
-    fn create_mock_commit(oid_str: &str, parents: Vec<&str>, message: &str) -> CommitInfo {
-        let oid = Oid::from_str(oid_str).unwrap();
-        let parent_oids = parents.iter().map(|p| Oid::from_str(p).unwrap()).collect();
-        CommitInfo {
-            oid,
-            short_id: oid_str[..7].to_string(),
-            author_name: "Test".to_string(),
-            author_email: "test@example.com".to_string(),
-            timestamp: Local::now(),
-            message: message.to_string(),
-            full_message: message.to_string(),
-            parent_oids,
-        }
-    }
-
-    fn create_mock_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
-        BranchInfo {
-            name: name.to_string(),
-            is_head,
-            is_remote: false,
-            upstream: None,
-            tip_oid: Oid::from_str(tip).unwrap(),
-        }
-    }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use git2::Oid;
-    use chrono::Local;
+    use std::str::FromStr;
 
     fn create_mock_commit(oid_str: &str, parents: Vec<&str>, message: &str) -> CommitInfo {
         let oid = Oid::from_str(oid_str).unwrap();
@@ -1568,6 +1675,9 @@ mod tests {
                              HorizontalCellType::TeeLeft(_) => '┤',
                              HorizontalCellType::TeeRight(_) => '├',
                              HorizontalCellType::Cross(_, _) => '┼',
+                             HorizontalCellType::CornerTopLeft(_) => '┌',
+                             HorizontalCellType::Compressed(c, _) => if *c > 9 { '+' } else { char::from_digit((*c) as u32, 10).unwrap() },
+                             _ => '?', 
                          };
                          line.push(ch);
                      }
@@ -1580,21 +1690,15 @@ mod tests {
 
     #[test]
     fn test_horizontal_graph_linear() {
-        // C1 <- C2 <- C3
         let c1 = create_mock_commit("1111111111111111111111111111111111111111", vec![], "Initial");
         let c2 = create_mock_commit("2222222222222222222222222222222222222222", vec!["1111111111111111111111111111111111111111"], "Second");
         let c3 = create_mock_commit("3333333333333333333333333333333333333333", vec!["2222222222222222222222222222222222222222"], "Third");
         
-        // Reverse chronological order input
         let commits = vec![c3.clone(), c2.clone(), c1.clone()];
         let branches = vec![create_mock_branch("master", "3333333333333333333333333333333333333333", true)];
         
-        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c3.oid), 80);
+        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c3.oid), 80, CompressionMode::default());
         
-        // Lane 0: ●(c1) ─ ●(c2) ─ ●(c3)
-        // With spaced placement (x = idx * 2), commits are at even columns with HLine between.
-        // C1 at x=0, C2 at x=2, C3 at x=4. HLine cells at odd columns (1, 3).
-        // Note: Right-alignment may add leading spaces, so we trim.
         let ascii = layout_to_ascii(&layout);
         assert_eq!(ascii.trim_start(), "●─●─●");
         
@@ -1604,14 +1708,6 @@ mod tests {
 
     #[test]
     fn test_horizontal_graph_topology() {
-        // Create a topology:
-        // C1 (Main)
-        // | \
-        // |  C2 (Feature)
-        // C3 (Main)
-        // | /
-        // C4 (Merge)
-        
         let oid_c1 = "1111111111111111111111111111111111111111"; // Oldest
         let oid_c2 = "2222222222222222222222222222222222222222";
         let oid_c3 = "3333333333333333333333333333333333333333";
@@ -1627,47 +1723,43 @@ mod tests {
             create_mock_branch("main", oid_c4, true),
             create_mock_branch("feature", oid_c2, false),
         ];
-        
-        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c4.oid), 80);
-        
-        // Expected Grid Analysis:
-        // C1 (x=0, lane=0)
-        // C2 (x=2, lane=1)
-        // C3 (x=4, lane=0)
-        // C4 (x=6, lane=0)
 
-        // Connections:
-        // C1->C2: P(0,0)->C(1,2). Turn=1.
-        //   Corner 1 at (0,1): Going Down -> HookDown(╮).
-        //   Corner 2 at (1,1): Coming Down -> JumpUp(╰).
-        //
-        // C1->C3: Same lane. HLine from x=1 to x=3.
-        //   Collision at (0,1): HookDown + HLine = TeeDown(┬).
-        //
-        // C3->C4: Same lane. HLine at x=5.
-        //
-        // C2->C4: P(1,2)->C(0,6). Turn=3.
-        //   Corner 1 at (1,3): Going Up -> HookUp(╯).
-        //   Corner 2 at (0,3): Coming Up -> JumpDown(╭).
-        //   Collision at (0,3): HLine(from C1->C3) + JumpDown = TeeDown(┬).
-        //
-        // Row 0: ●┬─┬●─●  (C1, TeeDown, HLine, TeeDown, C3, HLine, C4)
-        // Row 1:  ╰●╯     (JumpUp, C2, HookUp)
-
+        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c4.oid), 80, CompressionMode::default());
+        
         let ascii = layout_to_ascii(&layout);
         let expected_lines = vec![
             "●┬─┬●─●",
-            "╰●╯"  // Trim leading space since row 1 may be aligned
+            "╰●╯" 
         ];
         
         let actual_lines: Vec<&str> = ascii.lines().collect();
-        println!("Actual:\n{}", ascii);
         assert_eq!(actual_lines.len(), 2);
-        // Trim both leading and trailing whitespace due to right-alignment padding
         assert_eq!(actual_lines[0].trim(), expected_lines[0]);
         assert_eq!(actual_lines[1].trim(), expected_lines[1]);
     }
-}
-}
 
+    #[test]
+    fn test_horizontal_graph_compression() {
+        let c1 = create_mock_commit("1111111111111111111111111111111111111111", vec![], "Initial");
+        let c2 = create_mock_commit("2222222222222222222222222222222222222222", vec!["1111111111111111111111111111111111111111"], "Second");
+        let c3 = create_mock_commit("3333333333333333333333333333333333333333", vec!["2222222222222222222222222222222222222222"], "Third");
+        let c4 = create_mock_commit("4444444444444444444444444444444444444444", vec!["3333333333333333333333333333333333333333"], "Fourth");
+        let c5 = create_mock_commit("5555555555555555555555555555555555555555", vec!["4444444444444444444444444444444444444444"], "Fifth");
 
+        let commits = vec![c5.clone(), c4.clone(), c3.clone(), c2.clone(), c1.clone()];
+        let branches = vec![create_mock_branch("main", c5.oid.to_string().as_str(), true)];
+
+        // Compression ON: 3 linear commits (C2, C3, C4) should be compressed
+        let layout_on = build_horizontal_graph(&commits, &branches, &[], None, Some(c5.oid), 80, CompressionMode::On);
+        let ascii_on = layout_to_ascii(&layout_on);
+        
+        // Expected: C1(●) ─ 3 ─ C5(●)
+        assert_eq!(ascii_on.trim_start(), "●─3─●");
+
+        // Compression OFF: all visible
+        let layout_off = build_horizontal_graph(&commits, &branches, &[], None, Some(c5.oid), 80, CompressionMode::Off);
+        let ascii_off = layout_to_ascii(&layout_off);
+        // ●─●─●─●─●
+        assert_eq!(ascii_off.trim_start(), "●─●─●─●─●");
+    }
+}

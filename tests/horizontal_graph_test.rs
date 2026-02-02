@@ -3,6 +3,7 @@
 use chrono::Local;
 use git2::Oid;
 use keifu::git::{build_horizontal_graph, BranchInfo, CommitInfo, GraphOrientation};
+use keifu::git::graph::CompressionMode;
 
 fn make_oid(id: &str) -> Oid {
     // Convert id into a 40-char hex hash
@@ -46,7 +47,7 @@ fn test_build_horizontal_graph_creates_layout() {
     ];
     let branches = vec![make_branch("main", "c2", true)];
 
-    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80);
+    let layout = build_horizontal_graph(&commits, &branches, &[], None, None, 80, CompressionMode::default());
 
     // Should have chunks
     assert!(!layout.chunks.is_empty());
