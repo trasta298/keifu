@@ -180,8 +180,8 @@ impl<'a> StatefulWidget for HorizontalGraphViewWidget<'a> {
                     if let Some(lane_info) = self.layout.lanes.iter().find(|l| l.lane == lane) {
                          let show_label = lane_info.last_chunk_index == Some(chunk_idx);
                          
-                         if show_label && !lane_info.branch_names.is_empty() {
-                             let name = lane_info.branch_names[0].clone();
+                         if show_label && !lane_info.branches.is_empty() {
+                             let name = lane_info.branches[0].name.clone();
                              let name_width = name.len();
                              let x = inner.x + inner.width.saturating_sub(name_width as u16);
                              
@@ -278,7 +278,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
         is_selected: bool,
     ) {
         let (main_char, color) = self.cell_to_char(cell);
-        let is_commit = matches!(cell, HorizontalCellType::Commit(_, _));
+        let is_commit = matches!(cell, HorizontalCellType::Commit(_, _, _));
 
         // Create style with background highlight for selected cells
         let style = if is_selected {
@@ -359,7 +359,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeRight(_) | // ├
             HorizontalCellType::Cross(_, _) | // ┼
-            HorizontalCellType::Commit(_, _) |
+            HorizontalCellType::Commit(_, _, _) |
             HorizontalCellType::Compressed(_, _) => true, // Commits/Compressed can connect right
             _ => false,
         }
@@ -374,7 +374,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeLeft(_) |  // ┤
             HorizontalCellType::Cross(_, _) |
-            HorizontalCellType::Commit(_, _) |
+            HorizontalCellType::Commit(_, _, _) |
             HorizontalCellType::Compressed(_, _) => true,
             _ => false,
         }
@@ -383,7 +383,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
     fn cell_to_char(&self, cell: &HorizontalCellType) -> (char, Color) {
         let (ch, color_idx) = match cell {
             HorizontalCellType::Empty => (' ', 0),
-            HorizontalCellType::Commit(c, is_root) => (if *is_root { '○' } else { '●' }, *c),
+            HorizontalCellType::Commit(c, is_root, is_main_tip) => (if *is_main_tip { '★' } else if *is_root { '○' } else { '●' }, *c),
             HorizontalCellType::Pipe(c) => ('│', *c),
             HorizontalCellType::HLine(c) => ('─', *c),
             HorizontalCellType::JumpUp(c) => ('╰', *c),

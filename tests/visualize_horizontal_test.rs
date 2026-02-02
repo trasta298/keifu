@@ -43,7 +43,7 @@ fn make_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
 fn cell_to_char(cell: &HorizontalCellType) -> char {
     match cell {
         HorizontalCellType::Empty => ' ',
-        HorizontalCellType::Commit(_, _) => '●',
+        HorizontalCellType::Commit(_, _, _) => '●',
         HorizontalCellType::Pipe(_) => '│',
         HorizontalCellType::HLine(_) => '─',
         HorizontalCellType::JumpUp(_) => '╰',
@@ -140,7 +140,7 @@ fn test_visualize_branch_and_merge() {
 
     println!("Total chunks: {}", layout.chunks.len());
     println!("Total columns: {}", layout.total_columns);
-    println!("Lanes: {:?}", layout.lanes.iter().map(|l| &l.branch_names).collect::<Vec<_>>());
+    println!("Lanes: {:?}", layout.lanes.iter().map(|l| &l.branches).collect::<Vec<_>>());
     println!();
 
     for i in 0..layout.chunks.len() {

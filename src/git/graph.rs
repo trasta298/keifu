@@ -110,7 +110,7 @@ pub struct HorizontalSelection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HorizontalCellType {
     Empty,
-    Commit(usize, bool),    // ● (color, is_root)
+    Commit(usize, bool, bool),    // ● (color, is_root, is_main_tip)
     Pipe(usize),            // │
     HLine(usize),           // ─
     Compressed(usize, usize), // (count, color_index)
@@ -186,11 +186,19 @@ pub struct HorizontalGraphLayout {
     pub main_lane: usize,
 }
 
+/// Info about a branch on a lane
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneBranch {
+    pub name: String,
+    pub is_remote: bool,
+    pub is_head: bool,
+}
+
 /// Info about a lane for legend display
 #[derive(Debug, Clone)]
 pub struct LaneInfo {
     pub lane: usize,
-    pub branch_names: Vec<String>,
+    pub branches: Vec<LaneBranch>,
     pub color_index: usize,
     pub is_head: bool,
     /// The index of the last chunk where this lane has content (for label positioning)
@@ -218,9 +226,14 @@ pub fn build_horizontal_graph(
     let (commit_lane_map, lane_colors, num_lanes, lane_branches) = assign_lanes(commits, branches);
 
     // Determine main_lane (lane containing main/master branch, or lane 0)
-    let main_lane = branches.iter()
-        .find(|b| b.name == "main" || b.name == "master")
-        .and_then(|b| commit_lane_map.get(&b.tip_oid).copied())
+    // Determine main_lane (lane containing main/master/origin/main branches, or lane 0)
+    let candidates = ["main", "master", "origin/main", "origin/master", "develop", "origin/develop"];
+    let main_lane = candidates.iter()
+        .find_map(|name| {
+             branches.iter()
+                .find(|b| b.name == *name)
+                .and_then(|b| commit_lane_map.get(&b.tip_oid).copied())
+        })
         .unwrap_or(0);
 
     // Phase 2: Sparse Grid Construction & Routing
@@ -335,7 +348,10 @@ pub fn build_horizontal_graph(
                 // It is a root if none of its parents are in the graph (so far)
                 let is_root = !commit.parent_oids.iter().any(|p| commit_x_map.contains_key(p));
                 
-                grid.insert((lane, x), HorizontalCellType::Commit(color, is_root));
+                let is_main_tip = branches.iter()
+                    .any(|b| b.tip_oid == commit.oid && matches!(b.name.as_str(), "main" | "master" | "develop" | "origin/main" | "origin/master" | "origin/develop"));
+
+                grid.insert((lane, x), HorizontalCellType::Commit(color, is_root, is_main_tip));
                 commit_grid.insert((lane, x), commit.clone());
                 col_has_node.insert(x);
                 idx += 1;
@@ -348,7 +364,12 @@ pub fn build_horizontal_graph(
             // It is a root if none of its parents are in the graph (so far)
             let is_root = !commit.parent_oids.iter().any(|p| commit_x_map.contains_key(p));
             
-            grid.insert((lane, x), HorizontalCellType::Commit(color, is_root));
+            // It is a Main Tip if its OID matches a known Main/Master/Develop tip
+            // We need to identify main tips first.
+            let is_main_tip = branches.iter()
+                .any(|b| b.tip_oid == commit.oid && matches!(b.name.as_str(), "main" | "master" | "develop" | "origin/main" | "origin/master" | "origin/develop"));
+
+            grid.insert((lane, x), HorizontalCellType::Commit(color, is_root, is_main_tip));
             commit_grid.insert((lane, x), commit.clone());
             col_has_node.insert(x);
             idx += 1;
@@ -409,160 +430,165 @@ pub fn build_horizontal_graph(
 fn assign_lanes(
     commits: &[CommitInfo], 
     branches: &[BranchInfo]
-) -> (HashMap<Oid, usize>, HashMap<usize, usize>, usize, Vec<Vec<String>>) {
-    // Build OID -> row index and parent -> children mappings
+) -> (HashMap<Oid, usize>, HashMap<usize, usize>, usize, Vec<Vec<LaneBranch>>) {
+    // Build OID -> row index map
     let oid_to_row: HashMap<Oid, usize> = commits
         .iter()
         .enumerate()
         .map(|(i, c)| (c.oid, i))
         .collect();
     
-    // Build parent -> children map (like vertical graph does)
-    let mut parent_children: HashMap<Oid, Vec<Oid>> = HashMap::new();
-    for commit in commits {
-        for parent_oid in &commit.parent_oids {
-            if oid_to_row.contains_key(parent_oid) {
-                parent_children
-                    .entry(*parent_oid)
-                    .or_default()
-                    .push(commit.oid);
-            }
-        }
-    }
-    
-    // Fork points: commits with 2+ children
-    let _fork_points: HashSet<Oid> = parent_children
-        .iter()
-        .filter(|(_, children)| children.len() >= 2)
-        .map(|(parent, _)| *parent)
-        .collect();
-    
-    // Merge points: commits with 2+ parents
-    let _merge_points: HashSet<Oid> = commits
-        .iter()
-        .filter(|c| c.parent_oids.iter().filter(|p| oid_to_row.contains_key(p)).count() >= 2)
-        .map(|c| c.oid)
-        .collect();
-    
-    // Lane tracking: process commits from newest to oldest (like vertical graph)
-    // This mirrors the vertical graph's top-to-bottom approach
+    // Lane tracking: process commits from newest to oldest
     let mut commit_lane_map: HashMap<Oid, usize> = HashMap::new();
     let mut lane_tracking: Vec<Option<Oid>> = Vec::new(); // What OID each lane is tracking
-    let mut lane_branches: Vec<Vec<String>> = Vec::new();
+    let mut lane_branches: Vec<Vec<LaneBranch>> = Vec::new();
+    let mut lane_source_oid: Vec<Option<Oid>> = Vec::new(); // The OID that started this lane (tip)
     
     // Map branch tips to their branch names
-    let mut tip_to_branch: HashMap<Oid, Vec<String>> = HashMap::new();
+    let mut tip_to_branch: HashMap<Oid, Vec<LaneBranch>> = HashMap::new();
     for branch in branches {
         tip_to_branch
             .entry(branch.tip_oid)
             .or_default()
-            .push(branch.name.clone());
+            .push(LaneBranch {
+                name: branch.name.clone(),
+                is_remote: branch.is_remote,
+                is_head: branch.is_head,
+            });
     }
     
-    // Sort branches: main/master first, then by name
+    // Sort branches to identify "Primary" (Main)
     let mut sorted_branches: Vec<&BranchInfo> = branches.iter().collect();
     sorted_branches.sort_by(|a, b| {
-        let a_is_main = a.name == "master" || a.name == "main";
-        let b_is_main = b.name == "master" || b.name == "main";
-        if a_is_main && !b_is_main { std::cmp::Ordering::Less }
-        else if !a_is_main && b_is_main { std::cmp::Ordering::Greater }
-        else { a.name.cmp(&b.name) }
-    });
-    
-    // Process commits from newest to oldest (same order as input, which is topological)
-    for commit in commits {
-        // Check if any lane is tracking this commit's OID
-        let tracking_lane = lane_tracking
-            .iter()
-            .position(|l| l.map(|oid| oid == commit.oid).unwrap_or(false));
-        
-        let lane = if let Some(l) = tracking_lane {
-            l
-        } else {
-            // No lane tracking this commit, find an empty lane or create one
-            let empty_lane = lane_tracking.iter().position(|l| l.is_none());
-            if let Some(l) = empty_lane {
-                l
-            } else {
-                lane_tracking.push(None);
-                lane_branches.push(Vec::new());
-                lane_tracking.len() - 1
+        let get_score = |b: &BranchInfo| -> i32 {
+            match b.name.as_str() {
+                "main" => 1,
+                "master" => 2,
+                "origin/main" => 3,
+                "origin/master" => 4,
+                "develop" => 5,
+                "origin/develop" => 6,
+                _ => if b.is_head { 7 } else { 100 },
             }
         };
+        let sa = get_score(a);
+        let sb = get_score(b);
+        if sa != sb { sa.cmp(&sb) } else { a.name.cmp(&b.name) }
+    });
+
+    let primary_branch = sorted_branches.first().copied();
+    let primary_oid = primary_branch.map(|b| b.tip_oid);
+    let mut primary_lane_assigned = false;
+    
+    // Process commits
+    for commit in commits {
+        // 1. Check if any lane is tracking this commit's OID
+        let found_lane = lane_tracking
+            .iter()
+            .enumerate()
+            .position(|(i, l)| {
+                if let Some(oid) = l {
+                     if *oid == commit.oid {
+                         // FOUND path. Check for Collision with another branch tip.
+                         if tip_to_branch.contains_key(&commit.oid) {
+                             if let Some(source_oid) = lane_source_oid.get(i).and_then(|o| *o) {
+                                  if source_oid != commit.oid {
+                                      // COLLISION: Tip of different branch. Force split.
+                                      return false;
+                                  }
+                             }
+                         }
+                         return true;
+                     }
+                }
+                false
+            });
+        // 2. Select Lane
+        let lane = if let Some(l) = found_lane {
+            l
+        } else {
+             // New Lane Needed
+             if Some(commit.oid) == primary_oid {
+                // Priority: Lane 0
+                if let Some(l0) = lane_tracking.first() {
+                    if l0.is_none() { 0 }
+                    else {
+                         lane_tracking.iter().position(|l| l.is_none())
+                            .unwrap_or(lane_tracking.len())
+                    }
+                } else { 0 }
+             } else {
+                // Default logic
+                let start_search = if !primary_lane_assigned && primary_oid.is_some() { 1 } else { 0 };
+                let free = lane_tracking.iter().skip(start_search).position(|l| l.is_none()).map(|i| i + start_search);
+                
+                if let Some(l) = free {
+                    l
+                } else {
+                    // Must expand
+                    if start_search == 1 && lane_tracking.is_empty() {
+                         lane_tracking.push(None); lane_branches.push(Vec::new()); lane_source_oid.push(None);
+                         lane_tracking.push(None); lane_branches.push(Vec::new()); lane_source_oid.push(None);
+                         1
+                    } else {
+                         lane_tracking.push(None); lane_branches.push(Vec::new()); lane_source_oid.push(None);
+                         lane_tracking.len() - 1
+                    }
+                }
+             }
+        };
         
-        // Add branch names to this lane if it's a branch tip
+        // 3. Updates
+        if lane == 0 && Some(commit.oid) == primary_oid {
+             primary_lane_assigned = true;
+             // Ensure Primary Name is attached if missing (fallback)
+             if let Some(pb) = primary_branch {
+                  if lane_branches.is_empty() { lane_branches.push(Vec::new()); }
+                  if lane_branches[0].is_empty() {
+                       lane_branches[0].push(LaneBranch {
+                           name: pb.name.clone(), is_remote: pb.is_remote, is_head: pb.is_head
+                       });
+                  }
+             }
+        }
+        
+        commit_lane_map.insert(commit.oid, lane);
+        
+        while lane_tracking.len() <= lane { lane_tracking.push(None); }
+        while lane_branches.len() <= lane { lane_branches.push(Vec::new()); }
+        while lane_source_oid.len() <= lane { lane_source_oid.push(None); }
+        
+        if lane_source_oid[lane].is_none() {
+             lane_source_oid[lane] = Some(commit.oid);
+        }
+        
+        // Add Branch Names
         if let Some(branch_names) = tip_to_branch.get(&commit.oid) {
             if lane < lane_branches.len() {
-                for name in branch_names {
-                    if !lane_branches[lane].contains(name) {
-                        lane_branches[lane].push(name.clone());
+                for branch in branch_names {
+                    if !lane_branches[lane].iter().any(|b| b.name == branch.name) {
+                        lane_branches[lane].push(branch.clone());
                     }
                 }
             }
         }
         
-        // Handle fork points (multiple lanes converging)
-        // Check if multiple lanes are tracking this commit
-        let tracking_lanes: Vec<usize> = lane_tracking
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.map(|oid| oid == commit.oid).unwrap_or(false))
-            .map(|(i, _)| i)
-            .collect();
-        
-        // If this is a fork point (multiple branches diverging from here),
-        // release extra lanes after recording them
-        if tracking_lanes.len() >= 2 {
-            let main_lane = *tracking_lanes.iter().min().unwrap();
-            for &l in &tracking_lanes {
-                if l != main_lane {
-                    lane_tracking[l] = None;
+        // Merge Cleanup
+        for (idx, tracked_oid) in lane_tracking.iter_mut().enumerate() {
+            if idx != lane {
+                if let Some(oid) = tracked_oid {
+                    if *oid == commit.oid {
+                        *tracked_oid = None;
+                    }
                 }
             }
         }
-        
-        // Clear this lane's tracking
-        if lane < lane_tracking.len() {
+
+        // Advance to Parent
+        if let Some(p) = commit.parent_oids.first() {
+            lane_tracking[lane] = Some(*p);
+        } else {
             lane_tracking[lane] = None;
-        }
-        
-        // Record this commit's lane
-        commit_lane_map.insert(commit.oid, lane);
-        
-        // Set up tracking for parent commits
-        let valid_parents: Vec<Oid> = commit
-            .parent_oids
-            .iter()
-            .filter(|oid| oid_to_row.contains_key(oid))
-            .copied()
-            .collect();
-        
-        for (parent_idx, parent_oid) in valid_parents.iter().enumerate() {
-            // First parent continues on this lane
-            if parent_idx == 0 {
-                if lane < lane_tracking.len() {
-                    lane_tracking[lane] = Some(*parent_oid);
-                }
-            } else {
-                // Subsequent parents need new lanes (these are merge parents)
-                // Check if already tracked
-                let already_tracked = lane_tracking
-                    .iter()
-                    .any(|l| l.map(|oid| oid == *parent_oid).unwrap_or(false));
-                
-                if !already_tracked {
-                    // Find or create a new lane
-                    let empty_lane = lane_tracking.iter().position(|l| l.is_none());
-                    let new_lane = if let Some(l) = empty_lane {
-                        l
-                    } else {
-                        lane_tracking.push(None);
-                        lane_branches.push(Vec::new());
-                        lane_tracking.len() - 1
-                    };
-                    lane_tracking[new_lane] = Some(*parent_oid);
-                }
-            }
         }
     }
     
@@ -649,8 +675,8 @@ fn place_cell(grid: &mut HashMap<(usize, usize), HorizontalCellType>, lane: usiz
         (_, HorizontalCellType::Empty) => existing,
         
         // CRITICAL: Never overwrite a Commit! Commits always win.
-        (HorizontalCellType::Commit(c, r), _) => HorizontalCellType::Commit(c, r),
-        (_, HorizontalCellType::Commit(c, r)) => HorizontalCellType::Commit(c, r),
+        (HorizontalCellType::Commit(c, r, m), _) => HorizontalCellType::Commit(c, r, m),
+        (_, HorizontalCellType::Commit(c, r, m)) => HorizontalCellType::Commit(c, r, m),
         
         // Vertical + Horizontal = Cross
         (HorizontalCellType::Pipe(v), HorizontalCellType::HLine(h)) => HorizontalCellType::Cross(v, h),
@@ -713,7 +739,7 @@ fn chunk_grid(
     grid: HashMap<(usize, usize), HorizontalCellType>,
     commit_grid: HashMap<(usize, usize), CommitInfo>,
     num_lanes: usize,
-    lane_branches: Vec<Vec<String>>,
+    lane_branches: Vec<Vec<LaneBranch>>,
     lane_colors: HashMap<usize, usize>,
     head_oid: Option<Oid>, 
     commit_lane_map: &HashMap<Oid, usize>,
@@ -840,7 +866,7 @@ fn chunk_grid(
     
     // Build Lanes Info
     let mut lanes_info = Vec::new();
-    for (i, names) in lane_branches.iter().enumerate() {
+    for (i, branches) in lane_branches.iter().enumerate() {
         // Is Head?
         let is_head = if let Some(h) = head_oid {
             commit_lane_map.get(&h) == Some(&i)
@@ -848,7 +874,7 @@ fn chunk_grid(
         
         lanes_info.push(LaneInfo {
             lane: i,
-            branch_names: names.clone(),
+            branches: branches.clone(),
             color_index: *lane_colors.get(&i).unwrap_or(&0),
             is_head,
             last_chunk_index: None, // Todo: calc
@@ -1662,7 +1688,7 @@ mod tests {
                      for cell in &chunk.cells[lane] {
                          let ch = match cell {
                              HorizontalCellType::Empty => ' ',
-                             HorizontalCellType::Commit(_, _) => '●',
+                             HorizontalCellType::Commit(_, _, _) => '●',
                              HorizontalCellType::Pipe(_) => '│',
                              HorizontalCellType::HLine(_) => '─',
                              HorizontalCellType::JumpUp(_) => '╰',
@@ -1759,5 +1785,124 @@ mod tests {
         let ascii_off = layout_to_ascii(&layout_off);
         // ●─●─●─●─●
         assert_eq!(ascii_off.trim_start(), "●─●─●─●─●");
+    }
+
+    #[test]
+    fn test_ghost_main_branch_scenario() {
+        // Scenario: 
+        // undici (HEAD, Score 0) -> Primary.
+        // main (Score 1) -> Secondary.
+        // History:
+        // C1 (undici tip) -> C2 -> ...
+        // C3 (main tip) -> ...
+        
+        // If sorting works, undici is Primary.
+        // C1 (undici) processed first. Should take Lane 0.
+        // C3 (main) processed later. Should take Lane 1 (or next empty).
+        
+        let oid_undici = "1111111111111111111111111111111111111111"; // HEAD
+        let oid_main = "2222222222222222222222222222222222222222";
+        let oid_common = "3333333333333333333333333333333333333333";
+        
+        let c_undici = create_mock_commit(oid_undici, vec![oid_common], "Undici Tip");
+        let c_main = create_mock_commit(oid_main, vec![oid_common], "Main Tip");
+        let c_common = create_mock_commit(oid_common, vec![], "Common");
+        
+        let commits = vec![c_undici.clone(), c_main.clone(), c_common.clone()];
+        
+        let branches = vec![
+            create_mock_branch("undici", oid_undici, true), // HEAD
+            create_mock_branch("main", oid_main, false),
+        ];
+
+        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(Oid::from_str(oid_undici).unwrap()), 80, CompressionMode::default());
+        
+        // Lane 0 should be undici
+        let lane0 = layout.lanes.iter().find(|l| l.lane == 0).unwrap();
+        assert!(lane0.branches.iter().any(|b| b.name == "undici"), "Lane 0 should contain undici");
+        
+        // Lane 1 should be main (or at least not empty)
+        let lane1 = layout.lanes.iter().find(|l| l.branches.iter().any(|b| b.name == "main"));
+        assert!(lane1.is_some(), "Main branch should be assigned to a lane");
+    }
+
+    #[test]
+    fn test_horizontal_graph_branch_selection() {
+        // Test that primary branches (HEAD, main, master) are prioritized on Lane 0.
+        // Scenario 1: HEAD is "feature", "main" exists. HEAD (feature) should be Lane 0.
+        let oid_head = "1111111111111111111111111111111111111111";
+        let oid_main = "2222222222222222222222222222222222222222";
+        
+        let c_head = create_mock_commit(oid_head, vec![], "Head Feature");
+        let c_main = create_mock_commit(oid_main, vec![], "Main Tip");
+        
+        // Two detached lineages for checking lane assignment
+        let commits = vec![c_head.clone(), c_main.clone()];
+        let branches = vec![
+            create_mock_branch("feature", oid_head, true), // HEAD
+            create_mock_branch("main", oid_main, false),
+        ];
+        
+        // build_horizontal_graph calls assign_lanes. 
+        // Logic: Head is priority 0. Main is priority 1.
+        // Sorted: feature(HEAD) -> main.
+        // Primary OID: feature (HEAD).
+        // When processing feature commit: it is Primary, gets Lane 0.
+        // When processing main commit: it is NOT Primary. Lane 0 is taken (or reserved). Finds empty lane -> Lane 1.
+        
+        let layout1 = build_horizontal_graph(&commits, &branches, &[], None, Some(c_head.oid), 80, CompressionMode::default());
+        
+        // Check lanes:
+        // Layout:
+        // Lane 0: feature (HEAD)
+        // Lane 1: main
+        
+        let lane0 = layout1.lanes.iter().find(|l| l.lane == 0).unwrap();
+        assert!(lane0.branches.iter().any(|b| b.name == "feature"));
+        
+        
+        // Scenario 2: HEAD is None (detached?), "main" exists. "main" should be Lane 0.
+        // Branches have is_head = false.
+        let branches2 = vec![
+            create_mock_branch("feature", oid_head, false), 
+            create_mock_branch("main", oid_main, false),
+        ];
+        // Sorted: main (score 1) -> feature (score 100).
+        // Primary OID: main.
+        // When processing feature commit (newest first? assumes topological order input):
+        // Input: [c_head, c_main].
+        // 1. Process c_head (feature). Is it Primary? No (Primary is main).
+        //    Lane 0 empty? Yes. Primary Assigned? No.
+        //    Reserve Lane 0. Start search at 1.
+        //    Assigns Lane 1 to feature.
+        // 2. Process c_main (main). Is it Primary? Yes.
+        //    Lane 0 empty? (Yes, was reserved).
+        //    Assigns Lane 0 to main.
+        
+        let layout2 = build_horizontal_graph(&commits, &branches2, &[], None, None, 80, CompressionMode::default());
+        
+        // Lane 0 should contain "main"
+        let lane0_2 = layout2.lanes.iter().find(|l| l.lane == 0).unwrap();
+        assert!(lane0_2.branches.iter().any(|b| b.name == "main"));
+         
+        // Lane 1 should contain "feature"
+        let lane1_2 = layout2.lanes.iter().find(|l| l.lane == 1).unwrap();
+        assert!(lane1_2.branches.iter().any(|b| b.name == "feature"));
+
+        // Scenario 3: HEAD is "master", "feature" exists. HEAD (master) -> Lane 0.
+        // Master score 2 (HEAD score 0). Feature score 100.
+        // Outcome: Master on Lane 0.
+         let branches3 = vec![
+            create_mock_branch("feature", oid_head, false), 
+            create_mock_branch("master", oid_main, true), // HEAD
+        ];
+        // Sorted: master (HEAD+Name) -> feature.
+        // Primary: master.
+        // c_head (feature) processed first. Not primary. Reserve lane 0. Feature -> Lane 1.
+        // c_main (master) processed next. Primary. -> Lane 0.
+        
+        let layout3 = build_horizontal_graph(&commits, &branches3, &[], None, Some(Oid::from_str(oid_main).unwrap()), 80, CompressionMode::default());
+        let lane0_3 = layout3.lanes.iter().find(|l| l.lane == 0).unwrap();
+         assert!(lane0_3.branches.iter().any(|b| b.name == "master"));
     }
 }

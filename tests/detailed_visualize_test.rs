@@ -42,7 +42,7 @@ fn make_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
 fn widget_cell_to_char(cell: &HorizontalCellType, is_selected: bool) -> (char, &'static str) {
     let (ch, color_idx) = match cell {
         HorizontalCellType::Empty => (' ', 0),
-        HorizontalCellType::Commit(ci, _) => ('●', *ci),
+        HorizontalCellType::Commit(ci, _, _) => ('●', *ci),
         HorizontalCellType::Pipe(ci) => ('│', *ci),
         HorizontalCellType::HLine(ci) => ('─', *ci),
         HorizontalCellType::JumpUp(ci) => ('╰', *ci),
@@ -195,7 +195,7 @@ fn test_detailed_visualize_branch_and_merge() {
     println!("Lanes:");
     for (i, lane) in layout.lanes.iter().enumerate() {
         println!("  Lane {}: {:?} (head: {})",
-            i, lane.branch_names, lane.is_head);
+            i, lane.branches, lane.is_head);
     }
     println!();
 

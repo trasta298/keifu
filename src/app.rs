@@ -160,6 +160,25 @@ impl SearchState {
     }
 }
 
+/// Sidebar display mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarMode {
+    #[default]
+    Fixed,      // Fixed width (30 chars)
+    Percentage, // Percentage width (30%)
+    Hidden,     // Hidden
+}
+
+impl SidebarMode {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Fixed => Self::Percentage,
+            Self::Percentage => Self::Hidden,
+            Self::Hidden => Self::Fixed,
+        }
+    }
+}
+
 /// Application state
 pub struct App {
     pub mode: AppMode,
@@ -180,8 +199,9 @@ pub struct App {
     pub horizontal_graph_width: usize,
     /// Whether to show tags in horizontal view
     pub show_tags: bool,
-    /// Whether to show the sidebar (legend) in horizontal view
-    pub show_sidebar: bool,
+
+    /// Sidebar display mode
+    pub sidebar_mode: SidebarMode,
     /// Horizontal graph compression mode
     pub compression_mode: CompressionMode,
 
@@ -308,7 +328,7 @@ impl App {
             current_orientation: orientation,
             horizontal_graph_width: 80, // Initial default, updated on first render
             show_tags: true, // Tags are shown by default
-            show_sidebar: true, // Sidebar is shown by default
+            sidebar_mode: SidebarMode::Fixed,
             compression_mode: CompressionMode::default(),
             graph_list_state,
             branch_positions,
@@ -919,11 +939,11 @@ impl App {
                 }
             }
             Action::ToggleSidebar => {
-                self.show_sidebar = !self.show_sidebar;
-                if self.show_sidebar {
-                    self.set_message("Sidebar: ON");
-                } else {
-                    self.set_message("Sidebar: OFF");
+                self.sidebar_mode = self.sidebar_mode.next();
+                match self.sidebar_mode {
+                    SidebarMode::Fixed => self.set_message("Sidebar: Fixed (30)"),
+                    SidebarMode::Percentage => self.set_message("Sidebar: Percentage (30%)"),
+                    SidebarMode::Hidden => self.set_message("Sidebar: OFF"),
                 }
             }
             Action::ToggleCompression => {
@@ -1362,9 +1382,29 @@ impl App {
             }
             GraphOrientation::Horizontal => {
                 if let Some(layout) = &self.horizontal_layout {
-                    let lane_idx = layout.selection.lane;
-                    if let Some(lane_info) = layout.lanes.iter().find(|l| l.lane == lane_idx) {
-                        return lane_info.branch_names.clone();
+                    let sel = layout.selection;
+                    if let Some(chunk) = layout.chunks.get(sel.chunk_index) {
+                         if sel.lane < chunk.commits.len() && sel.column < chunk.commits[sel.lane].len() {
+                             if let Some(commit) = &chunk.commits[sel.lane][sel.column] {
+                                 // Look up branches that point to this commit (tips)
+                                 let mut names: Vec<String> = self.branches.iter()
+                                    .filter(|b| b.tip_oid == commit.oid)
+                                    .map(|b| b.name.clone())
+                                    .collect();
+
+                                 // Also include branches associated with this lane
+                                 if let Some(lane_info) = layout.lanes.get(sel.lane) {
+                                     for branch in &lane_info.branches {
+                                         let name = &branch.name;
+                                         if !names.contains(name) {
+                                             names.push(name.clone());
+                                         }
+                                     }
+                                 }
+
+                                 return names;
+                             }
+                         }
                     }
                 }
                 Vec::new()
@@ -1414,7 +1454,7 @@ impl App {
         if let Some(layout) = &self.horizontal_layout {
             if let Some(chunk) = layout.chunks.get(chunk_idx) {
                 if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(col)) {
-                     return matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _));
+                     return matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _, _));
                 }
             }
         }
@@ -1484,7 +1524,7 @@ impl App {
                 // Check if found commit
                 if let Some(chunk) = layout.chunks.get(curr_chunk_idx) {
                     if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
-                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _, _)) {
                             layout.selection.chunk_index = curr_chunk_idx;
                             layout.selection.column = curr_col;
                             break;
@@ -1526,7 +1566,7 @@ impl App {
                 // Check if found commit
                 if let Some(next_chunk) = layout.chunks.get(curr_chunk_idx) {
                      if let Some(cell) = next_chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
-                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _, _)) {
                             layout.selection.chunk_index = curr_chunk_idx;
                             layout.selection.column = curr_col;
                             break;

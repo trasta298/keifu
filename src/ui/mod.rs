@@ -17,7 +17,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, AppMode, InputAction};
+use crate::app::{App, AppMode, InputAction, SidebarMode};
 
 use self::{
     commit_detail::CommitDetailWidget,
@@ -225,13 +225,23 @@ fn draw_horizontal_layout(frame: &mut Frame, app: &mut App) {
     let status_area = main_chunks[1];
 
     // Content split: Legend | Graph+Detail
-    let sidebar_width = if app.show_sidebar { 22 } else { 0 };
+    // Content split: Legend | Graph+Detail
     let horizontal_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(sidebar_width),  // Legend sidebar
-            Constraint::Min(40),     // Graph area
-        ])
+        .constraints(match app.sidebar_mode {
+            SidebarMode::Fixed => [
+                Constraint::Length(30),
+                Constraint::Min(40),
+            ],
+            SidebarMode::Percentage => [
+                Constraint::Percentage(30),
+                Constraint::Min(40),
+            ],
+            SidebarMode::Hidden => [
+                Constraint::Length(0),
+                Constraint::Min(40),
+            ],
+        })
         .split(content_area);
 
     let legend_area = horizontal_chunks[0];
