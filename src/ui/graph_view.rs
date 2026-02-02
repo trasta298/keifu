@@ -352,6 +352,9 @@ fn render_graph_line<'a>(
             CellType::TeeRight(color_idx) => ('├', get_color_by_index(*color_idx)),
             CellType::TeeLeft(color_idx) => ('┤', get_color_by_index(*color_idx)),
             CellType::TeeUp(color_idx) => ('┴', get_color_by_index(*color_idx)),
+            CellType::TeeDown(color_idx) => ('┬', get_color_by_index(*color_idx)),
+            CellType::Slash(color_idx) => ('/', get_color_by_index(*color_idx)),
+            CellType::Backslash(color_idx) => ('\\', get_color_by_index(*color_idx)),
         };
 
         // Draw all line glyphs in bold

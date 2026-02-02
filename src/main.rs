@@ -3,9 +3,12 @@
 use anyhow::Result;
 use clap::Parser;
 
+use clap::ValueEnum;
+
 use keifu::{
     app::App,
     event::{get_key_event, poll_event},
+    git::graph::GraphOrientation,
     keybindings::map_key_to_action,
     tui, ui,
 };
@@ -16,10 +19,35 @@ use keifu::{
     version,
     about = "A TUI tool to visualize Git commit graphs with branch genealogy"
 )]
-struct Cli {}
+struct Cli {
+    /// Set initial graph orientation (vertical or horizontal)
+    #[arg(long, value_enum, default_value = "vertical")]
+    orientation: CliGraphOrientation,
+    /// Shortcut for --orientation horizontal
+    #[arg(long)]
+    horizontal: bool,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum CliGraphOrientation {
+    Vertical,
+    Horizontal,
+}
 
 fn main() -> Result<()> {
-    Cli::parse();
+    let cli = Cli::parse();
+
+    // Handle mutually exclusive flags
+    let orientation = if cli.horizontal {
+        // --horizontal flag takes precedence
+        GraphOrientation::Horizontal
+    } else {
+        match cli.orientation {
+            CliGraphOrientation::Vertical => GraphOrientation::Vertical,
+            CliGraphOrientation::Horizontal => GraphOrientation::Horizontal,
+        }
+    };
+
     // Restore the terminal on panic
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -28,7 +56,7 @@ fn main() -> Result<()> {
     }));
 
     // Initialize application
-    let mut app = App::new()?;
+    let mut app = App::new_with_orientation(Some(orientation))?;
 
     // Initialize terminal
     let mut terminal = tui::init()?;

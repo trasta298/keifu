@@ -3,8 +3,8 @@
 use ratatui::style::Color;
 use std::collections::{HashSet, VecDeque};
 
-/// Per-lane color palette (11-color rotation)
-pub const LANE_COLORS: [Color; 11] = [
+/// Per-lane color palette (16-color rotation)
+pub const LANE_COLORS: [Color; 16] = [
     Color::Cyan,
     Color::Green,
     Color::Magenta,
@@ -16,6 +16,12 @@ pub const LANE_COLORS: [Color; 11] = [
     Color::LightYellow,
     Color::LightBlue, // Main branch
     Color::LightRed,
+    // Additional vibrant colors
+    Color::Indexed(208), // Orange
+    Color::Indexed(118), // Lime Green
+    Color::Indexed(201), // Hot Pink
+    Color::Indexed(51),  // Electric Blue
+    Color::Indexed(214), // Gold
 ];
 
 /// Color index for uncommitted changes (gray)
@@ -52,7 +58,7 @@ pub struct ColorAssigner {
     /// Colors assigned to fork siblings on the current row
     current_fork_colors: HashSet<usize>,
     /// Color usage counters (for balancing)
-    color_usage_count: [usize; 11],
+    color_usage_count: [usize; 16],
     /// Lane of the main branch (fixed color)
     main_lane: Option<usize>,
 }
@@ -68,7 +74,7 @@ impl ColorAssigner {
             history_window: 6,
             current_row: 0,
             current_fork_colors: HashSet::new(),
-            color_usage_count: [0; 11],
+            color_usage_count: [0; 16],
             main_lane: None,
         }
     }
@@ -124,19 +130,18 @@ impl ColorAssigner {
         self.ensure_capacity(lane);
 
         // Compute penalties for each color
-        let mut color_penalties: [f64; 11] = [0.0; 11];
+        let mut color_penalties: [f64; 16] = [0.0; 16];
 
         // 1. Last color on this lane (high penalty)
         let last_color = self.lane_last_color[lane];
         color_penalties[last_color] += 10.0;
 
-        // 2. Colors on all active lanes (distance-weighted)
-        for (other_lane, color_opt) in self.lane_colors.iter().enumerate() {
+        // 2. Colors on all active lanes (strict penalty to avoid duplicates)
+        for (_other_lane, color_opt) in self.lane_colors.iter().enumerate() {
             if let Some(color) = color_opt {
-                let lane_distance = (lane as isize - other_lane as isize).unsigned_abs() as f64;
-                // Closer lanes get higher penalty
-                let weight = 8.0 / (lane_distance + 1.0);
-                color_penalties[*color] += weight;
+                // If we want unique colors whenever possible (up to palette size),
+                // we should penalize ANY active color heavily.
+                color_penalties[*color] += 1000.0; 
             }
         }
 

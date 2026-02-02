@@ -32,8 +32,12 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         }
 
         // Page scroll
-        (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::PageDown),
-        (KeyModifiers::CONTROL, KeyCode::Char('u')) => Some(Action::PageUp),
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) | (KeyModifiers::NONE, KeyCode::PageDown) => {
+            Some(Action::PageDown)
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('u')) | (KeyModifiers::NONE, KeyCode::PageUp) => {
+            Some(Action::PageUp)
+        }
 
         // Top/bottom
         (KeyModifiers::NONE, KeyCode::Char('g')) | (KeyModifiers::NONE, KeyCode::Home) => {
@@ -55,12 +59,16 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         }
 
         // Branch selection within same commit
+        // Context-sensitive Left/Right
         (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
-            Some(Action::BranchLeft)
+            Some(Action::MoveLeft)
         }
         (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
-            Some(Action::BranchRight)
+            Some(Action::MoveRight)
         }
+
+        // Horizontal navigation (context-sensitive based on orientation)
+
 
         // Git operations
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::Checkout),
@@ -74,6 +82,10 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // UI
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Action::Search),
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => Some(Action::Refresh),
+        (KeyModifiers::SHIFT, KeyCode::Char('O')) => Some(Action::ToggleOrientation),
+        (KeyModifiers::NONE, KeyCode::Char('t')) => Some(Action::ToggleTags),
+        (KeyModifiers::NONE, KeyCode::Char('s')) => Some(Action::ToggleSidebar),
+        (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::ToggleCompression),
         (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             Some(Action::Quit)
