@@ -324,8 +324,8 @@ pub fn build_horizontal_graph(
                 }
             }
             
-            // Only compress if we have more than 2 commits
-            if count > 2 {
+            // Compress if we have any commits
+            if count > 0 {
                 let x = current_x;
                 // Record map for all compressed commits
                 for k in 0..count {
@@ -563,12 +563,29 @@ fn assign_lanes(
         }
         
         // Add Branch Names
+        // Only assign the "Best" branch to the lane to avoid cluttering history with alias branches
         if let Some(branch_names) = tip_to_branch.get(&commit.oid) {
             if lane < lane_branches.len() {
-                for branch in branch_names {
-                    if !lane_branches[lane].iter().any(|b| b.name == branch.name) {
-                        lane_branches[lane].push(branch.clone());
-                    }
+                // If the lane is empty of branches, or we want to ensure the primary one is there
+                // We pick the best candidate from branch_names
+                let mut candidates: Vec<&LaneBranch> = branch_names.iter().collect();
+                candidates.sort_by(|a, b| {
+                    let get_score = |name: &str, is_head: bool| -> i32 {
+                        match name {
+                            "main" => 1, "master" => 2, "origin/main" => 3, "origin/master" => 4,
+                            "develop" => 5, "origin/develop" => 6, _ => if is_head { 7 } else { 100 },
+                        }
+                    };
+                    let sa = get_score(&a.name, a.is_head);
+                    let sb = get_score(&b.name, b.is_head);
+                    if sa != sb { sa.cmp(&sb) } else { a.name.cmp(&b.name) }
+                });
+                
+                if let Some(best) = candidates.first() {
+                     // Add only the best branch if not already present
+                     if !lane_branches[lane].iter().any(|b| b.name == best.name) {
+                         lane_branches[lane].push((*best).clone());
+                     }
                 }
             }
         }

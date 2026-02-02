@@ -319,8 +319,8 @@ impl<'a> HorizontalGraphViewWidget<'a> {
                         // Display the digit as the "connector" char? No, main char is first.
                         // cell_to_char returns (main, clr).
                         // If cell_to_char returns '·' for main, here we set second char.
-                        // If count < 10: "·N"
-                        char::from_digit(*count as u32, 10).unwrap_or('?')
+                        // If count < 10: "··"
+                        '·'
                     } else if *count < 100 {
                         // Display second digit
                         char::from_digit((*count as u32) % 10, 10).unwrap_or('?')
