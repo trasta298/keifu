@@ -106,6 +106,14 @@ struct SearchState {
     original_node: Option<usize>,
 }
 
+/// Represents the currently selected node in the graph (abstraction over Vertical/Horizontal)
+#[derive(Debug)]
+pub enum SelectedNode<'a> {
+    Commit(&'a CommitInfo),
+    Uncommitted { count: usize },
+    None,
+}
+
 impl SearchState {
     /// Move selection up in the dropdown (with wrap-around)
     fn select_up(&mut self) {
@@ -681,100 +689,95 @@ impl App {
             }
         }
 
-        // Check if uncommitted node is selected
-        let selected_node = self
-            .graph_list_state
-            .selected()
-            .and_then(|idx| self.graph_layout.nodes.get(idx));
+        // Check selection
+        let selected = self.get_selected_node();
 
-        let Some(node) = selected_node else {
-            return;
-        };
+        // Handle selected node type
+        match selected {
+            SelectedNode::Uncommitted { .. } => {
+                // Do nothing if cache exists or already loading
+                if self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_loading {
+                    return;
+                }
 
-        // Handle uncommitted node
-        if node.is_uncommitted {
-            // Do nothing if cache exists or already loading
-            if self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_loading {
-                return;
+                // Compute uncommitted diff in the background
+                let (tx, rx) = mpsc::channel();
+                let repo_path = self.repo_path.clone();
+
+                // Save current working tree status as cache key before starting computation
+                self.uncommitted_cache_key = self.repo.get_working_tree_status().ok().flatten();
+
+                self.uncommitted_diff_loading = true;
+                self.uncommitted_diff_receiver = Some(rx);
+
+                thread::spawn(move || {
+                    let diff = git2::Repository::open(&repo_path)
+                        .ok()
+                        .and_then(|repo| CommitDiffInfo::from_working_tree(&repo).ok());
+
+                    let _ = tx.send(diff);
+                });
             }
+            SelectedNode::Commit(commit) => {
+                let oid = commit.oid;
 
-            // Compute uncommitted diff in the background
-            let (tx, rx) = mpsc::channel();
-            let repo_path = self.repo_path.clone();
+                // Do nothing if the cache is valid
+                if self.diff_cache_oid == Some(oid) {
+                    return;
+                }
 
-            // Save current working tree status as cache key before starting computation
-            self.uncommitted_cache_key = self.repo.get_working_tree_status().ok().flatten();
+                // Do nothing if already loading this OID
+                if self.diff_loading_oid == Some(oid) {
+                    return;
+                }
 
-            self.uncommitted_diff_loading = true;
-            self.uncommitted_diff_receiver = Some(rx);
+                // Start loading diff
+                self.diff_cache_oid = None;
+                self.diff_cache = None;
+                self.diff_loading_oid = Some(oid);
 
-            thread::spawn(move || {
-                let diff = git2::Repository::open(&repo_path)
-                    .ok()
-                    .and_then(|repo| CommitDiffInfo::from_working_tree(&repo).ok());
+                let (tx, rx) = mpsc::channel();
+                let repo_path = self.repo_path.clone(); // Use configured path
+                let oid_copy = oid;
 
-                let _ = tx.send(diff);
-            });
-            return;
+                thread::spawn(move || {
+                    let result = match git2::Repository::open(&repo_path) {
+                        Ok(repo) => {
+                            let diff = CommitDiffInfo::from_commit(&repo, oid_copy).ok();
+                            DiffResult {
+                                oid: oid_copy,
+                                diff,
+                            }
+                        }
+                        Err(_) => DiffResult {
+                            oid: oid_copy,
+                            diff: None,
+                        },
+                    };
+                    let _ = tx.send(result);
+                });
+
+                self.diff_receiver = Some(rx);
+            }
+            SelectedNode::None => {}
         }
-
-        // Handle regular commit node
-        let Some(commit) = &node.commit else {
-            return;
-        };
-
-        let oid = commit.oid;
-
-        // Do nothing if the cache is valid
-        if self.diff_cache_oid == Some(oid) {
-            return;
-        }
-
-        // Do nothing if already loading
-        if self.diff_loading_oid == Some(oid) {
-            return;
-        }
-
-        // Compute diff in the background
-        let (tx, rx) = mpsc::channel();
-        let repo_path = self.repo_path.clone();
-
-        self.diff_loading_oid = Some(oid);
-        self.diff_receiver = Some(rx);
-
-        thread::spawn(move || {
-            let diff = git2::Repository::open(&repo_path)
-                .ok()
-                .and_then(|repo| CommitDiffInfo::from_commit(&repo, oid).ok());
-
-            let _ = tx.send(DiffResult { oid, diff });
-        });
     }
 
     /// Get cached diff info for the currently selected node
     pub fn cached_diff(&self) -> Option<&CommitDiffInfo> {
-        let node = self
-            .graph_list_state
-            .selected()
-            .and_then(|idx| self.graph_layout.nodes.get(idx))?;
-
-        if node.is_uncommitted {
-            self.uncommitted_diff_cache.as_ref()
-        } else {
-            self.diff_cache.as_ref()
+        match self.get_selected_node() {
+            SelectedNode::Uncommitted { .. } => self.uncommitted_diff_cache.as_ref(),
+            SelectedNode::Commit(_) => self.diff_cache.as_ref(),
+            SelectedNode::None => None,
         }
     }
 
     /// Whether diff is currently loading for the selected node
     pub fn is_diff_loading(&self) -> bool {
-        let node = self
-            .graph_list_state
-            .selected()
-            .and_then(|idx| self.graph_layout.nodes.get(idx));
-
-        match node {
-            Some(n) if n.is_uncommitted => self.uncommitted_diff_loading,
-            _ => self.diff_loading_oid.is_some(),
+        match self.get_selected_node() {
+            SelectedNode::Uncommitted { .. } => self.uncommitted_diff_loading,
+            SelectedNode::Commit(_) => self.diff_loading_oid.is_some(),
+            SelectedNode::None => false,
         }
     }
 
@@ -1267,6 +1270,44 @@ impl App {
         self.graph_list_state
             .selected()
             .and_then(|i| self.graph_layout.nodes.get(i))
+    }
+
+    /// Get the currently selected node (works for both Vertical and Horizontal layouts)
+    pub fn get_selected_node(&self) -> SelectedNode<'_> {
+        match self.current_orientation {
+            GraphOrientation::Vertical => {
+                if let Some(node) = self.selected_commit_node() {
+                    if node.is_uncommitted {
+                        SelectedNode::Uncommitted {
+                            count: node.uncommitted_count,
+                        }
+                    } else if let Some(commit) = &node.commit {
+                        SelectedNode::Commit(commit)
+                    } else {
+                        SelectedNode::None
+                    }
+                } else {
+                    SelectedNode::None
+                }
+            }
+            GraphOrientation::Horizontal => {
+                if let Some(layout) = &self.horizontal_layout {
+                    let sel = layout.selection;
+                    if let Some(chunk) = layout.chunks.get(sel.chunk_index) {
+                        // Check bounds to be safe
+                        if sel.lane < chunk.commits.len() {
+                            let lane_commits = &chunk.commits[sel.lane];
+                            if sel.column < lane_commits.len() {
+                                if let Some(commit) = &lane_commits[sel.column] {
+                                    return SelectedNode::Commit(commit);
+                                }
+                            }
+                        }
+                    }
+                }
+                SelectedNode::None
+            }
+        }
     }
 
     fn do_checkout(&mut self) -> Result<()> {

@@ -8,9 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
-use crate::app::App;
+use crate::app::{App, SelectedNode};
 use crate::git::{CommitDiffInfo, FileChangeKind};
-
+ 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
 
 /// Width threshold for switching to vertical layout
@@ -43,88 +43,77 @@ impl<'a> CommitDetailWidget<'a> {
     }
 
     fn build_commit_lines(app: &App) -> Vec<Line<'a>> {
-        let Some(selected) = app.graph_list_state.selected() else {
-            return vec![Line::from(Span::styled(
-                "Select a commit",
-                Style::default().fg(Color::DarkGray),
-            ))];
-        };
+        match app.get_selected_node() {
+            SelectedNode::Uncommitted { count } => {
+                vec![
+                    Line::from(Span::styled(
+                        "Uncommitted Changes",
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("{} files with changes", count),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]
+            }
+            SelectedNode::Commit(commit) => {
+                // Build commit detail lines
+                let mut lines = vec![
+                    // Commit hash
+                    Line::from(vec![
+                        Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
+                    ]),
+                    // Author
+                    Line::from(vec![
+                        Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("{} <{}>", commit.author_name, commit.author_email),
+                            Style::default().fg(Color::Blue),
+                        ),
+                    ]),
+                    // Date
+                    Line::from(vec![
+                        Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]),
+                ];
 
-        let Some(node) = app.graph_layout.nodes.get(selected) else {
-            return Vec::new();
-        };
+                // Parent commits
+                if !commit.parent_oids.is_empty() {
+                    let parents: Vec<String> = commit
+                        .parent_oids
+                        .iter()
+                        .map(|oid| oid.to_string()[..7].to_string())
+                        .collect();
+                    lines.push(Line::from(vec![
+                        Span::styled("Parent: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(parents.join(", "), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
 
-        // Handle uncommitted changes node
-        if node.is_uncommitted {
-            return vec![
-                Line::from(Span::styled(
-                    "Uncommitted Changes",
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    format!("{} files with changes", node.uncommitted_count),
+                lines.push(Line::from(""));
+
+                // Message
+                for line in commit.full_message.lines() {
+                    lines.push(Line::from(Span::raw(line.to_string())));
+                }
+
+                lines
+            }
+            SelectedNode::None => {
+                vec![Line::from(Span::styled(
+                    "Select a commit",
                     Style::default().fg(Color::DarkGray),
-                )),
-            ];
+                ))]
+            }
         }
-
-        // Handle connector rows (no commit)
-        let Some(commit) = &node.commit else {
-            return vec![Line::from(Span::styled(
-                "(connector line)",
-                Style::default().fg(Color::DarkGray),
-            ))];
-        };
-
-        // Build commit detail lines
-        let mut lines = vec![
-            // Commit hash
-            Line::from(vec![
-                Span::styled("Commit: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(commit.oid.to_string(), Style::default().fg(Color::Yellow)),
-            ]),
-            // Author
-            Line::from(vec![
-                Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    format!("{} <{}>", commit.author_name, commit.author_email),
-                    Style::default().fg(Color::Blue),
-                ),
-            ]),
-            // Date
-            Line::from(vec![
-                Span::styled("Date:   ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    commit.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]),
-        ];
-
-        // Parent commits
-        if !commit.parent_oids.is_empty() {
-            let parents: Vec<String> = commit
-                .parent_oids
-                .iter()
-                .map(|oid| oid.to_string()[..7].to_string())
-                .collect();
-            lines.push(Line::from(vec![
-                Span::styled("Parent: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(parents.join(", "), Style::default().fg(Color::DarkGray)),
-            ]));
-        }
-
-        lines.push(Line::from(""));
-
-        // Message
-        for line in commit.full_message.lines() {
-            lines.push(Line::from(Span::raw(line.to_string())));
-        }
-
-        lines
     }
 
     fn build_file_list_lines_from(diff: Option<&CommitDiffInfo>) -> Vec<Line<'a>> {
