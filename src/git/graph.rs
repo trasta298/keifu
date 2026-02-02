@@ -295,14 +295,14 @@ fn assign_lanes(
     }
     
     // Fork points: commits with 2+ children
-    let fork_points: HashSet<Oid> = parent_children
+    let _fork_points: HashSet<Oid> = parent_children
         .iter()
         .filter(|(_, children)| children.len() >= 2)
         .map(|(parent, _)| *parent)
         .collect();
     
     // Merge points: commits with 2+ parents
-    let merge_points: HashSet<Oid> = commits
+    let _merge_points: HashSet<Oid> = commits
         .iter()
         .filter(|c| c.parent_oids.iter().filter(|p| oid_to_row.contains_key(p)).count() >= 2)
         .map(|c| c.oid)
@@ -671,7 +671,11 @@ fn chunk_grid(
                 // We want: cells[?] to be at grid column t.column
                 // So: start_col + ? - pad_left = t.column
                 //     ? = t.column - start_col + pad_left
-                column: t.column.saturating_sub(orig_start),
+                // We use + pad_left first to avoid underflow when start_col > t.column (which shouldn't happen for valid tags, 
+                // but start_col can be > t.column if we just subtracted, so careful with order)
+                // Actually, t.column is grid index. start_col is padded index. 
+                // The cell index is relative to start_col.
+                column: (t.column + pad_left).saturating_sub(start_col),
                 position: t.position,
                 lane: t.lane,
                 color_index: t.color_index,

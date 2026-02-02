@@ -133,6 +133,10 @@ impl Widget for HelpPopup {
                 Span::styled("Toggle tags (horizontal view)", desc_style),
             ]),
             Line::from(vec![
+                Span::styled("  s          ", key_style),
+                Span::styled("Toggle sidebar (horizontal view)", desc_style),
+            ]),
+            Line::from(vec![
                 Span::styled("  ?          ", key_style),
                 Span::styled("Toggle this help", desc_style),
             ]),

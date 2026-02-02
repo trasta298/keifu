@@ -171,6 +171,8 @@ pub struct App {
     pub horizontal_graph_width: usize,
     /// Whether to show tags in horizontal view
     pub show_tags: bool,
+    /// Whether to show the sidebar (legend) in horizontal view
+    pub show_sidebar: bool,
 
     // UI state
     pub graph_list_state: ListState,
@@ -294,6 +296,7 @@ impl App {
             current_orientation: orientation,
             horizontal_graph_width: 80, // Initial default, updated on first render
             show_tags: true, // Tags are shown by default
+            show_sidebar: true, // Sidebar is shown by default
             graph_list_state,
             branch_positions,
             selected_branch_position,
@@ -904,6 +907,14 @@ impl App {
                     self.set_message("Tags: ON");
                 } else {
                     self.set_message("Tags: OFF");
+                }
+            }
+            Action::ToggleSidebar => {
+                self.show_sidebar = !self.show_sidebar;
+                if self.show_sidebar {
+                    self.set_message("Sidebar: ON");
+                } else {
+                    self.set_message("Sidebar: OFF");
                 }
             }
             Action::Refresh => {

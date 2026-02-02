@@ -237,10 +237,11 @@ fn draw_horizontal_layout(frame: &mut Frame, app: &mut App) {
     let status_area = main_chunks[1];
 
     // Content split: Legend | Graph+Detail
+    let sidebar_width = if app.show_sidebar { 22 } else { 0 };
     let horizontal_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(22),  // Legend sidebar
+            Constraint::Length(sidebar_width),  // Legend sidebar
             Constraint::Min(40),     // Graph area
         ])
         .split(content_area);
