@@ -1414,7 +1414,7 @@ impl App {
         if let Some(layout) = &self.horizontal_layout {
             if let Some(chunk) = layout.chunks.get(chunk_idx) {
                 if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(col)) {
-                     return matches!(cell, crate::git::graph::HorizontalCellType::Commit(_));
+                     return matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _));
                 }
             }
         }
@@ -1484,7 +1484,7 @@ impl App {
                 // Check if found commit
                 if let Some(chunk) = layout.chunks.get(curr_chunk_idx) {
                     if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
-                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _)) {
                             layout.selection.chunk_index = curr_chunk_idx;
                             layout.selection.column = curr_col;
                             break;
@@ -1526,7 +1526,7 @@ impl App {
                 // Check if found commit
                 if let Some(next_chunk) = layout.chunks.get(curr_chunk_idx) {
                      if let Some(cell) = next_chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
-                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_, _)) {
                             layout.selection.chunk_index = curr_chunk_idx;
                             layout.selection.column = curr_col;
                             break;

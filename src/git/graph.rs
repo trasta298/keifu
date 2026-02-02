@@ -110,7 +110,7 @@ pub struct HorizontalSelection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HorizontalCellType {
     Empty,
-    Commit(usize),          // ●
+    Commit(usize, bool),    // ● (color, is_root)
     Pipe(usize),            // │
     HLine(usize),           // ─
     Compressed(usize, usize), // (count, color_index)
@@ -311,45 +311,44 @@ pub fn build_horizontal_graph(
                 }
             }
             
-            // Check if we should compress this group
-            // For Short mode, maybe we strictly collapse > 2? 
-            // The user req says "ON mode: ...19..." or "SHORT: ...". 
-            // Let's assume On/Short both compress any sequence >= 1?
-            // "OFF mode: ●───●" (1 commit)
-            // If I have A -> B -> C. B is compressible.
-            // A -> ... -> C.
-            // If I just have A->B (end). B is compressible? No, B is last commit, so interesting.
-            
-            // If count is small (e.g. 1), maybe don't compress?
-            // But user might want to hide even single trivial commits.
-            // Let's compress if count >= 1.
-            
-            // In Short mode, user asked "ON mode (can we support three modes: ON/OFF/SHORT?): ●───...19...───● or ●─...─●"
-            // Let's interpret:
-            // ON: Show count "19"
-            // SHORT: Show just dot or shorter symbol? Or maybe "ON" uses more width?
-            // For now, struct is same, rendering differs. Or cell type varies.
-            
-            let x = current_x;
-            // Record map for all compressed commits
-            for k in 0..count {
-                let (c, _, _) = nodes[idx + k];
-                commit_x_map.insert(c.oid, x);
-                // We do NOT add to commit_grid for compressed nodes (they are not selectable/visible individually)
-                // OR we do, but they overlap? If we add to commit_grid, selection might pick them up.
-                // Better to NOT add keys to commit_grid for hidden commits.
+            // Only compress if we have more than 2 commits
+            if count > 2 {
+                let x = current_x;
+                // Record map for all compressed commits
+                for k in 0..count {
+                    let (c, _, _) = nodes[idx + k];
+                    commit_x_map.insert(c.oid, x);
+                    // We do NOT add to commit_grid for compressed nodes
+                }
+                
+                grid.insert((lane, x), HorizontalCellType::Compressed(count, color));
+                col_has_node.insert(x);
+                
+                // Advance
+                idx += count;
+            } else {
+                // Not enough to compress, render first commit normally
+                // Next iteration will handle adjacent ones
+                let x = current_x;
+                commit_x_map.insert(commit.oid, x);
+                
+                // It is a root if none of its parents are in the graph (so far)
+                let is_root = !commit.parent_oids.iter().any(|p| commit_x_map.contains_key(p));
+                
+                grid.insert((lane, x), HorizontalCellType::Commit(color, is_root));
+                commit_grid.insert((lane, x), commit.clone());
+                col_has_node.insert(x);
+                idx += 1;
             }
-            
-            grid.insert((lane, x), HorizontalCellType::Compressed(count, color));
-            col_has_node.insert(x);
-            
-            // Advance
-            idx += count;
         } else {
             // Normal visible commit
             let x = current_x;
             commit_x_map.insert(commit.oid, x);
-            grid.insert((lane, x), HorizontalCellType::Commit(color));
+            
+            // It is a root if none of its parents are in the graph (so far)
+            let is_root = !commit.parent_oids.iter().any(|p| commit_x_map.contains_key(p));
+            
+            grid.insert((lane, x), HorizontalCellType::Commit(color, is_root));
             commit_grid.insert((lane, x), commit.clone());
             col_has_node.insert(x);
             idx += 1;
@@ -650,8 +649,8 @@ fn place_cell(grid: &mut HashMap<(usize, usize), HorizontalCellType>, lane: usiz
         (_, HorizontalCellType::Empty) => existing,
         
         // CRITICAL: Never overwrite a Commit! Commits always win.
-        (HorizontalCellType::Commit(c), _) => HorizontalCellType::Commit(c),
-        (_, HorizontalCellType::Commit(c)) => HorizontalCellType::Commit(c),
+        (HorizontalCellType::Commit(c, r), _) => HorizontalCellType::Commit(c, r),
+        (_, HorizontalCellType::Commit(c, r)) => HorizontalCellType::Commit(c, r),
         
         // Vertical + Horizontal = Cross
         (HorizontalCellType::Pipe(v), HorizontalCellType::HLine(h)) => HorizontalCellType::Cross(v, h),
@@ -1663,7 +1662,7 @@ mod tests {
                      for cell in &chunk.cells[lane] {
                          let ch = match cell {
                              HorizontalCellType::Empty => ' ',
-                             HorizontalCellType::Commit(_) => '●',
+                             HorizontalCellType::Commit(_, _) => '●',
                              HorizontalCellType::Pipe(_) => '│',
                              HorizontalCellType::HLine(_) => '─',
                              HorizontalCellType::JumpUp(_) => '╰',
@@ -1677,7 +1676,6 @@ mod tests {
                              HorizontalCellType::Cross(_, _) => '┼',
                              HorizontalCellType::CornerTopLeft(_) => '┌',
                              HorizontalCellType::Compressed(c, _) => if *c > 9 { '+' } else { char::from_digit((*c) as u32, 10).unwrap() },
-                             _ => '?', 
                          };
                          line.push(ch);
                      }

@@ -278,7 +278,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
         is_selected: bool,
     ) {
         let (main_char, color) = self.cell_to_char(cell);
-        let is_commit = matches!(cell, HorizontalCellType::Commit(_));
+        let is_commit = matches!(cell, HorizontalCellType::Commit(_, _));
 
         // Create style with background highlight for selected cells
         let style = if is_selected {
@@ -359,7 +359,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeRight(_) | // ├
             HorizontalCellType::Cross(_, _) | // ┼
-            HorizontalCellType::Commit(_) |
+            HorizontalCellType::Commit(_, _) |
             HorizontalCellType::Compressed(_, _) => true, // Commits/Compressed can connect right
             _ => false,
         }
@@ -374,7 +374,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
             HorizontalCellType::TeeUp(_) |    // ┴
             HorizontalCellType::TeeLeft(_) |  // ┤
             HorizontalCellType::Cross(_, _) |
-            HorizontalCellType::Commit(_) |
+            HorizontalCellType::Commit(_, _) |
             HorizontalCellType::Compressed(_, _) => true,
             _ => false,
         }
@@ -383,7 +383,7 @@ impl<'a> HorizontalGraphViewWidget<'a> {
     fn cell_to_char(&self, cell: &HorizontalCellType) -> (char, Color) {
         let (ch, color_idx) = match cell {
             HorizontalCellType::Empty => (' ', 0),
-            HorizontalCellType::Commit(c) => ('●', *c),
+            HorizontalCellType::Commit(c, is_root) => (if *is_root { '○' } else { '●' }, *c),
             HorizontalCellType::Pipe(c) => ('│', *c),
             HorizontalCellType::HLine(c) => ('─', *c),
             HorizontalCellType::JumpUp(c) => ('╰', *c),

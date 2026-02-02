@@ -42,7 +42,7 @@ fn make_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
 fn widget_cell_to_char(cell: &HorizontalCellType, is_selected: bool) -> (char, &'static str) {
     let (ch, color_idx) = match cell {
         HorizontalCellType::Empty => (' ', 0),
-        HorizontalCellType::Commit(ci) => ('●', *ci),
+        HorizontalCellType::Commit(ci, _) => ('●', *ci),
         HorizontalCellType::Pipe(ci) => ('│', *ci),
         HorizontalCellType::HLine(ci) => ('─', *ci),
         HorizontalCellType::JumpUp(ci) => ('╰', *ci),

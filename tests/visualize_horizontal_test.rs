@@ -43,7 +43,7 @@ fn make_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
 fn cell_to_char(cell: &HorizontalCellType) -> char {
     match cell {
         HorizontalCellType::Empty => ' ',
-        HorizontalCellType::Commit(_) => '●',
+        HorizontalCellType::Commit(_, _) => '●',
         HorizontalCellType::Pipe(_) => '│',
         HorizontalCellType::HLine(_) => '─',
         HorizontalCellType::JumpUp(_) => '╰',
