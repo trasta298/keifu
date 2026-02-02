@@ -12,8 +12,16 @@ pub enum Action {
     JumpToHead,
     NextBranch,
     PrevBranch,
-    BranchLeft,
-    BranchRight,
+    MoveLeft,
+    MoveRight,
+
+    // Horizontal navigation (context-sensitive based on orientation)
+    MoveHorizontalLeft,  // Previous commit (horizontal) / Previous lane (vertical)
+    MoveHorizontalRight, // Next commit (horizontal) / Next lane (vertical)
+    MoveHorizontalUp,    // Previous lane (horizontal) / Previous commit (vertical)
+    MoveHorizontalDown,  // Next lane (horizontal) / Next commit (vertical)
+    HorizontalPrevChunk, // Page Up - newer chunk
+    HorizontalNextChunk, // Page Down - older chunk
 
     // Git operations
     Checkout,
@@ -25,6 +33,8 @@ pub enum Action {
 
     // UI
     ToggleHelp,
+    ToggleOrientation,
+    ToggleTags,
     Search,
     Refresh,
     Quit,

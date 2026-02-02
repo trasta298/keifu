@@ -14,12 +14,17 @@ use crate::{
     config::Config,
     git::{
         build_graph,
-        graph::GraphLayout,
+        build_horizontal_graph,
+        graph::{
+            GraphLayout,
+            GraphOrientation,
+            HorizontalGraphLayout,
+        },
         operations::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
             fetch_origin, merge_branch, rebase_branch,
         },
-        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository, WorkingTreeStatus,
+        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository, TagInfo, WorkingTreeStatus,
     },
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
@@ -156,7 +161,16 @@ pub struct App {
     // Data
     pub commits: Vec<CommitInfo>,
     pub branches: Vec<BranchInfo>,
+    pub tags: Vec<TagInfo>,
     pub graph_layout: GraphLayout,
+
+    // Horizontal layout state
+    pub horizontal_layout: Option<HorizontalGraphLayout>,
+    pub current_orientation: GraphOrientation,
+    /// Cached terminal width used when building horizontal layout (for resize detection)
+    pub horizontal_graph_width: usize,
+    /// Whether to show tags in horizontal view
+    pub show_tags: bool,
 
     // UI state
     pub graph_list_state: ListState,
@@ -203,7 +217,14 @@ pub struct App {
 
 impl App {
     /// Create a new application
+    /// Uses the default orientation from config
     pub fn new() -> Result<Self> {
+        Self::new_with_orientation(None)
+    }
+
+    /// Create a new application with optional orientation
+    /// Uses CLI override if provided, otherwise falls back to config
+    pub fn new_with_orientation(cli_orientation: Option<GraphOrientation>) -> Result<Self> {
         let config = Config::load();
         let now = Instant::now();
 
@@ -211,14 +232,20 @@ impl App {
         let repo_path = repo.path.clone();
         let head_name = repo.head_name();
 
-        let commits = repo.get_commits(500)?;
-        let branches = repo.get_branches()?;
+        // Determine orientation: CLI override -> config -> default
+        let orientation = cli_orientation.unwrap_or(config.graph.orientation);
         let uncommitted_count = repo
             .get_working_tree_status()
             .ok()
             .flatten()
             .map(|s| s.file_count);
         let head_commit_oid = repo.head_oid();
+
+        let commits = repo.get_commits(500)?;
+        let branches = repo.get_branches()?;
+        let tags = repo.get_tags().unwrap_or_default();
+
+        // Build graph layout based on orientation
         let graph_layout = build_graph(&commits, &branches, uncommitted_count, head_commit_oid);
 
         let mut graph_list_state = ListState::default();
@@ -240,6 +267,20 @@ impl App {
             Some(0)
         };
 
+        // Create horizontal layout if orientation is Horizontal
+        let horizontal_layout = if orientation == GraphOrientation::Horizontal {
+            Some(build_horizontal_graph(
+                &commits,
+                &branches,
+                &tags,
+                uncommitted_count,
+                head_commit_oid,
+                80, // Default terminal width
+            ))
+        } else {
+            None
+        };
+
         Ok(Self {
             mode: AppMode::Normal,
             repo,
@@ -247,7 +288,12 @@ impl App {
             head_name,
             commits,
             branches,
+            tags,
             graph_layout,
+            horizontal_layout,
+            current_orientation: orientation,
+            horizontal_graph_width: 80, // Initial default, updated on first render
+            show_tags: true, // Tags are shown by default
             graph_list_state,
             branch_positions,
             selected_branch_position,
@@ -288,6 +334,33 @@ impl App {
         self.uncommitted_cache_key = None;
     }
 
+    /// Update horizontal layout if terminal width changed
+    pub fn update_horizontal_layout_width(&mut self, new_width: usize) {
+        if self.current_orientation == GraphOrientation::Horizontal 
+            && new_width != self.horizontal_graph_width 
+        {
+            self.horizontal_graph_width = new_width;
+            
+            // Rebuild horizontal layout with new width
+            let uncommitted_count = self
+                .repo
+                .get_working_tree_status()
+                .ok()
+                .flatten()
+                .map(|s| s.file_count);
+            let head_commit_oid = self.repo.head_oid();
+
+            self.horizontal_layout = Some(build_horizontal_graph(
+                &self.commits,
+                &self.branches,
+                &self.tags,
+                uncommitted_count,
+                head_commit_oid,
+                new_width,
+            ));
+        }
+    }
+
     /// Refresh repository data
     /// If `force` is true, always clears diff cache (for manual refresh)
     /// If `force` is false, keeps cache when the same content is selected (for auto-refresh)
@@ -310,6 +383,7 @@ impl App {
 
         self.commits = self.repo.get_commits(500)?;
         self.branches = self.repo.get_branches()?;
+        self.tags = self.repo.get_tags().unwrap_or_default();
         let head_commit_oid = self.repo.head_oid();
         self.graph_layout = build_graph(
             &self.commits,
@@ -724,16 +798,28 @@ impl App {
                 self.should_quit = true;
             }
             Action::MoveUp => {
-                self.move_selection(-1);
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_selection(-1),
+                    GraphOrientation::Horizontal => self.move_selection_up(),
+                }
             }
             Action::MoveDown => {
-                self.move_selection(1);
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_selection(1),
+                    GraphOrientation::Horizontal => self.move_selection_down(),
+                }
             }
             Action::PageUp => {
-                self.move_selection(-10);
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_selection(-10),
+                    GraphOrientation::Horizontal => self.prev_chunk(),
+                }
             }
             Action::PageDown => {
-                self.move_selection(10);
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_selection(10),
+                    GraphOrientation::Horizontal => self.next_chunk(),
+                }
             }
             Action::GoToTop => {
                 self.select_first();
@@ -750,14 +836,75 @@ impl App {
             Action::PrevBranch => {
                 self.move_to_prev_branch();
             }
-            Action::BranchLeft => {
-                self.move_branch_left();
+            Action::MoveLeft => {
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_branch_left(),
+                    GraphOrientation::Horizontal => self.move_selection_left(),
+                }
             }
-            Action::BranchRight => {
-                self.move_branch_right();
+            Action::MoveRight => {
+                match self.current_orientation {
+                    GraphOrientation::Vertical => self.move_branch_right(),
+                    GraphOrientation::Horizontal => self.move_selection_right(),
+                }
+            }
+
+            // Horizontal navigation (context-sensitive based on orientation)
+            Action::MoveHorizontalLeft => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.move_selection_left();
+                } else {
+                    self.move_selection(-1);
+                }
+            }
+            Action::MoveHorizontalRight => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.move_selection_right();
+                } else {
+                    self.move_selection(1);
+                }
+            }
+            Action::MoveHorizontalUp => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.move_selection_up();
+                } else {
+                    self.move_selection(-1);
+                }
+            }
+            Action::MoveHorizontalDown => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.move_selection_down();
+                } else {
+                    self.move_selection(1);
+                }
+            }
+            Action::HorizontalPrevChunk => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.prev_chunk();
+                } else {
+                    self.move_selection(-10);
+                }
+            }
+            Action::HorizontalNextChunk => {
+                if self.current_orientation == GraphOrientation::Horizontal {
+                    self.next_chunk();
+                } else {
+                    self.move_selection(10);
+                }
             }
             Action::ToggleHelp => {
                 self.mode = AppMode::Help;
+            }
+            Action::ToggleOrientation => {
+                self.toggle_orientation();
+            }
+            Action::ToggleTags => {
+                self.show_tags = !self.show_tags;
+                if self.show_tags {
+                    self.set_message("Tags: ON");
+                } else {
+                    self.set_message("Tags: OFF");
+                }
             }
             Action::Refresh => {
                 self.refresh(true)?;
@@ -1144,5 +1291,269 @@ impl App {
                     .map(move |name| (node_idx, name.to_string()))
             })
             .collect()
+    }
+
+    // Horizontal layout navigation methods
+
+    /// Helper to check if a commit exists at specific coordinates
+    fn is_commit_at(&self, chunk_idx: usize, lane: usize, col: usize) -> bool {
+        if let Some(layout) = &self.horizontal_layout {
+            if let Some(chunk) = layout.chunks.get(chunk_idx) {
+                if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(col)) {
+                     return matches!(cell, crate::git::graph::HorizontalCellType::Commit(_));
+                }
+            }
+        }
+        false
+    }
+    
+    /// Helper: Snap selection to the nearest commit on the current lane
+    fn snap_to_nearest_commit(&mut self) {
+        let Some(layout) = &self.horizontal_layout else { return; };
+        let lane = layout.selection.lane;
+        let chunk_idx = layout.selection.chunk_index;
+        let col = layout.selection.column;
+
+        // check current
+        if self.is_commit_at(chunk_idx, lane, col) { return; }
+        
+        // search radius
+        let radius = 20; 
+        for i in 1..=radius {
+             // Check Left
+            if col >= i {
+                if self.is_commit_at(chunk_idx, lane, col - i) {
+                    if let Some(l) = self.horizontal_layout.as_mut() {
+                        l.selection.column = col - i;
+                    }
+                    return;
+                }
+            }
+            // Check Right
+            if self.is_commit_at(chunk_idx, lane, col + i) {
+                if let Some(l) = self.horizontal_layout.as_mut() {
+                    l.selection.column = col + i;
+                }
+                return;
+            }
+        }
+    }
+
+    /// Move to previous (older) commit (left in horizontal mode)
+    /// With reversed chunks: chunk 0 = newest, chunk N = oldest
+    /// LEFT arrow goes to older commits = higher chunk index
+    pub fn move_selection_left(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            let mut curr_chunk_idx = layout.selection.chunk_index;
+            let mut curr_col = layout.selection.column;
+            let lane = layout.selection.lane;
+            let max_chunk_idx = layout.chunks.len().saturating_sub(1);
+
+            // Search backwards (older) for the next commit cell
+            loop {
+                if curr_col > 0 {
+                    // Move left within current chunk
+                    curr_col -= 1;
+                } else if curr_chunk_idx < max_chunk_idx {
+                    // At left edge of chunk, go to next chunk (older = higher index)
+                    curr_chunk_idx += 1;
+                    if let Some(chunk) = layout.chunks.get(curr_chunk_idx) {
+                        // Start from right side of older chunk
+                        curr_col = chunk.cells.get(lane).map(|r| r.len().saturating_sub(1)).unwrap_or(0);
+                    } else {
+                        break; 
+                    }
+                } else {
+                    break; // Start of history (oldest commits)
+                }
+
+                // Check if found commit
+                if let Some(chunk) = layout.chunks.get(curr_chunk_idx) {
+                    if let Some(cell) = chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_)) {
+                            layout.selection.chunk_index = curr_chunk_idx;
+                            layout.selection.column = curr_col;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Move to next (newer) commit (right in horizontal mode)
+    /// With reversed chunks: chunk 0 = newest, chunk N = oldest
+    /// RIGHT arrow goes to newer commits = lower chunk index
+    pub fn move_selection_right(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            let mut curr_chunk_idx = layout.selection.chunk_index;
+            let mut curr_col = layout.selection.column;
+            let lane = layout.selection.lane;
+
+            // Search forwards (newer) for the next commit cell
+            loop {
+                let chunk = match layout.chunks.get(curr_chunk_idx) {
+                    Some(c) => c,
+                    None => break,
+                };
+                let chunk_width = chunk.cells.get(lane).map(|r| r.len()).unwrap_or(0);
+                
+                if curr_col < chunk_width.saturating_sub(1) {
+                    // Move right within current chunk
+                    curr_col += 1;
+                } else if curr_chunk_idx > 0 {
+                    // At right edge of chunk, go to previous chunk (newer = lower index)
+                    curr_chunk_idx -= 1;
+                    curr_col = 0; // Start from left side of newer chunk
+                } else {
+                    break; // End of history (newest commits)
+                }
+                
+                // Check if found commit
+                if let Some(next_chunk) = layout.chunks.get(curr_chunk_idx) {
+                     if let Some(cell) = next_chunk.cells.get(lane).and_then(|row| row.get(curr_col)) {
+                        if matches!(cell, crate::git::graph::HorizontalCellType::Commit(_)) {
+                            layout.selection.chunk_index = curr_chunk_idx;
+                            layout.selection.column = curr_col;
+                            break;
+                        }
+                     }
+                }
+            }
+        }
+    }
+
+    /// Move to previous lane (up)
+    pub fn move_selection_up(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            if layout.selection.lane > 0 {
+                layout.selection.lane -= 1;
+            }
+        }
+        self.snap_to_nearest_commit();
+    }
+
+    /// Move to next lane (down)
+    pub fn move_selection_down(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            if let Some(chunk) = layout.chunks.get(layout.selection.chunk_index) {
+                if layout.selection.lane < chunk.lane_count - 1 {
+                    layout.selection.lane += 1;
+                }
+            }
+        }
+        self.snap_to_nearest_commit();
+    }
+
+    /// Page up - previous chunk
+    pub fn prev_chunk(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            if layout.selection.chunk_index > 0 {
+                layout.selection.chunk_index -= 1;
+                layout.selection.column = 0;
+            }
+        }
+    }
+
+    /// Page down - next chunk
+    pub fn next_chunk(&mut self) {
+        if let Some(ref mut layout) = self.horizontal_layout {
+            if layout.selection.chunk_index < layout.chunks.len() - 1 {
+                layout.selection.chunk_index += 1;
+                layout.selection.column = 0;
+            }
+        }
+    }
+
+    /// Toggle between vertical and horizontal orientation
+    pub fn toggle_orientation(&mut self) {
+        // Save current selection state
+        let selected_oid = self
+            .graph_list_state
+            .selected()
+            .and_then(|idx| self.graph_layout.nodes.get(idx))
+            .and_then(|node| node.commit.as_ref())
+            .map(|c| c.oid);
+
+        let selected_branch_name = self.selected_branch_name().map(|s| s.to_string());
+
+        // Toggle orientation
+        self.current_orientation = match self.current_orientation {
+            GraphOrientation::Vertical => GraphOrientation::Horizontal,
+            GraphOrientation::Horizontal => GraphOrientation::Vertical,
+        };
+
+        // Rebuild layout based on new orientation
+        match self.current_orientation {
+            GraphOrientation::Vertical => {
+                // Clear horizontal layout
+                self.horizontal_layout = None;
+            }
+            GraphOrientation::Horizontal => {
+                // Reset cached width to 0 to force rebuild with actual panel width on next render
+                // The update_horizontal_layout_width() call in draw_horizontal_layout() 
+                // will rebuild with the correct width
+                self.horizontal_graph_width = 0;
+                
+                // Build initial horizontal layout with placeholder width
+                // This will be rebuilt immediately on render with correct width
+                let uncommitted_count = self
+                    .repo
+                    .get_working_tree_status()
+                    .ok()
+                    .flatten()
+                    .map(|s| s.file_count);
+                let head_commit_oid = self.repo.head_oid();
+
+                self.horizontal_layout = Some(build_horizontal_graph(
+                    &self.commits,
+                    &self.branches,
+                    &self.tags,
+                    uncommitted_count,
+                    head_commit_oid,
+                    80, // Placeholder, will be rebuilt with actual width on first render
+                ));
+            }
+        }
+
+        // Restore selection: try to find the same commit, fall back to branch name
+        if let Some(oid) = selected_oid {
+            // Find the node with this commit OID
+            if let Some((node_idx, _)) = self
+                .graph_layout
+                .nodes
+                .iter()
+                .enumerate()
+                .find(|(_, node)| node.commit.as_ref().map(|c| c.oid) == Some(oid))
+            {
+                self.graph_list_state.select(Some(node_idx));
+                self.sync_branch_selection_to_node(node_idx);
+                let orientation_name = match self.current_orientation {
+                    GraphOrientation::Vertical => "vertical",
+                    GraphOrientation::Horizontal => "horizontal",
+                };
+                self.set_message(format!("Switched to {} layout", orientation_name));
+                return;
+            }
+        }
+
+        // Fallback: restore by branch name
+        if let Some(branch_name) = selected_branch_name {
+            if let Some((pos, (node_idx, _))) = self
+                .branch_positions
+                .iter()
+                .enumerate()
+                .find(|(_, (_, name))| name == &branch_name)
+            {
+                self.selected_branch_position = Some(pos);
+                self.graph_list_state.select(Some(*node_idx));
+            }
+        }
+
+        let orientation_name = match self.current_orientation {
+            GraphOrientation::Vertical => "vertical",
+            GraphOrientation::Horizontal => "horizontal",
+        };
+        self.set_message(format!("Switched to {} layout", orientation_name));
     }
 }

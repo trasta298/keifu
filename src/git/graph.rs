@@ -1,10 +1,10 @@
 //! Commit graph construction
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use git2::Oid;
 
-use super::{BranchInfo, CommitInfo};
+use super::{BranchInfo, CommitInfo, TagInfo};
 use crate::graph::colors::{ColorAssigner, UNCOMMITTED_COLOR_INDEX};
 
 /// Graph node
@@ -37,13 +37,13 @@ pub enum CellType {
     Pipe(usize),
     /// Commit node
     Commit(usize),
-    /// Start branch to the right ╭ (branch goes up-right)
+    /// Start branch to the right (├ for horizontal layout)
     BranchRight(usize),
-    /// Start branch to the left ╮ (branch goes up-left)
+    /// Start branch to the left (┤ for horizontal layout)
     BranchLeft(usize),
-    /// Merge from the right ╰ (branch joins from down-right)
+    /// Merge from the right (┐ for horizontal layout)
     MergeRight(usize),
-    /// Merge from the left ╯ (branch joins from down-left)
+    /// Merge from the left (┘ for horizontal layout)
     MergeLeft(usize),
     /// Horizontal line
     Horizontal(usize),
@@ -55,6 +55,125 @@ pub enum CellType {
     TeeLeft(usize),
     /// Upward T junction (fork point) ┴
     TeeUp(usize),
+    /// Downward T junction (fork point) ┬
+    TeeDown(usize),
+    /// Diagonal slash /
+    Slash(usize),
+    /// Diagonal backslash \
+    Backslash(usize),
+}
+
+/// Graph orientation setting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GraphOrientation {
+    #[default]
+    Vertical,   // Current: commits top-to-bottom
+    Horizontal, // New: commits left-to-right in chunks
+}
+
+/// A horizontal position in the graph
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HorizontalPosition {
+    pub column: usize,  // Horizontal position (time)
+    pub lane: usize,    // Vertical position (branch lane)
+}
+
+/// Selection within horizontal graph
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HorizontalSelection {
+    pub chunk_index: usize,
+    pub column: usize,  // Commit column within chunk
+    pub lane: usize,    // Lane position
+}
+
+/// Cell types for Horizontal Layout (Orthogonal)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HorizontalCellType {
+    Empty,
+    Commit(usize),          // ●
+    Pipe(usize),            // │
+    HLine(usize),           // ─
+    JumpUp(usize),          // ╰ Left-to-Up
+    JumpDown(usize),        // ╭ Left-to-Down
+    HookUp(usize),          // ╯ Right-to-Up
+    HookDown(usize),        // ╮ Right-to-Down
+    TeeDown(usize),         // ┬
+    TeeUp(usize),           // ┴
+    TeeLeft(usize),         // ┤
+    TeeRight(usize),        // ├
+    Cross(usize, usize),    // ┼ (v_color, h_color)
+}
+
+/// Position of tag relative to the graph lanes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagPosition {
+    /// Display tag above the graph (for branches above main or alternating main tags)
+    Top,
+    /// Display tag below the graph (for branches below main or alternating main tags)
+    Bottom,
+}
+
+/// Tag display information for a specific column
+#[derive(Debug, Clone)]
+pub struct TagDisplay {
+    /// Tag name
+    pub name: String,
+    /// Column index where the tag connects
+    pub column: usize,
+    /// Whether to display on top or bottom
+    pub position: TagPosition,
+    /// Which lane the tagged commit is on
+    pub lane: usize,
+    /// Color index for the tag line
+    pub color_index: usize,
+}
+
+/// A horizontal chunk (slice of the graph in time)
+#[derive(Debug, Clone)]
+pub struct HorizontalChunk {
+    /// Chunk index (0 = newest)
+    pub index: usize,
+    /// Starting column index in the full graph
+    pub start_column: usize,
+    /// Ending column index (exclusive)
+    pub end_column: usize,
+    /// Number of lanes (rows) in this chunk
+    pub lane_count: usize,
+    /// Grid of cells: [lane][column] = cell at that position
+    pub cells: Vec<Vec<HorizontalCellType>>,
+    /// Commit data for each cell: [lane][column] = optional commit
+    pub commits: Vec<Vec<Option<CommitInfo>>>,
+    /// Which lanes have commits in this chunk
+    pub active_lanes: HashSet<usize>,
+    /// Tags to display in this chunk
+    pub tags: Vec<TagDisplay>,
+}
+
+/// Complete horizontal graph layout
+#[derive(Debug, Clone)]
+pub struct HorizontalGraphLayout {
+    /// All chunks ordered newest to oldest
+    pub chunks: Vec<HorizontalChunk>,
+    /// Lane info for legend display
+    pub lanes: Vec<LaneInfo>,
+    /// Currently selected position
+    pub selection: HorizontalSelection,
+    /// Total number of columns across all chunks
+    pub total_columns: usize,
+    /// Which lane is the "main" branch (for tag positioning)
+    pub main_lane: usize,
+}
+
+/// Info about a lane for legend display
+#[derive(Debug, Clone)]
+pub struct LaneInfo {
+    pub lane: usize,
+    pub branch_names: Vec<String>,
+    pub color_index: usize,
+    pub is_head: bool,
+    /// The index of the last chunk where this lane has content (for label positioning)
+    pub last_chunk_index: Option<usize>,
 }
 
 /// Graph layout
@@ -62,6 +181,623 @@ pub enum CellType {
 pub struct GraphLayout {
     pub nodes: Vec<GraphNode>,
     pub max_lane: usize,
+}
+
+/// Build a horizontal graph layout from commit list
+pub fn build_horizontal_graph(
+    commits: &[CommitInfo],
+    branches: &[BranchInfo],
+    tags: &[TagInfo],
+    _uncommitted_count: Option<usize>,
+    head_commit_oid: Option<Oid>,
+    terminal_width: usize,
+) -> HorizontalGraphLayout {
+    // Phase 1: Swimlane Assignment
+    let (commit_lane_map, lane_colors, num_lanes, lane_branches) = assign_lanes(commits, branches);
+
+    // Determine main_lane (lane containing main/master branch, or lane 0)
+    let main_lane = branches.iter()
+        .find(|b| b.name == "main" || b.name == "master")
+        .and_then(|b| commit_lane_map.get(&b.tip_oid).copied())
+        .unwrap_or(0);
+
+    // Phase 2: Sparse Grid Construction & Routing
+    // We used a HashMap for sparse grid: (lane, col) -> Cell
+    let mut grid: HashMap<(usize, usize), HorizontalCellType> = HashMap::new();
+    let mut commit_grid: HashMap<(usize, usize), CommitInfo> = HashMap::new();
+    
+    // Track occupied columns to implement "Column Reservation"
+    let mut col_has_node: HashSet<usize> = HashSet::new();
+
+    // 2.1 Place Commits (Nodes)
+    // Basic placement: X = index (0 = old, N = new)
+    // We will expand gaps later if needed, but for now let's place them densely
+    // Note: commits are sorted Newest -> Oldest. 
+    // We want Left -> Right to be Oldest -> Newest.
+    let _num_raw_commits = commits.len();
+    let mut commit_x_map: HashMap<Oid, usize> = HashMap::new();
+    
+    // Spaced placement: Each commit at x = idx * 2, leaving gaps for connectors
+    // This implements the "Column Reservation" rule from the design plan:
+    // A column can contain EITHER Nodes OR Connectors, not both.
+    // turn_x = p_x + 1 will land in the empty gap columns.
+    for (idx, commit) in commits.iter().rev().enumerate() {
+        let x = idx * 2;  // Spaced: commits at even columns, connectors at odd
+        let lane = *commit_lane_map.get(&commit.oid).unwrap_or(&0);
+        let color = *lane_colors.get(&lane).unwrap_or(&0);
+        
+        grid.insert((lane, x), HorizontalCellType::Commit(color));
+        commit_grid.insert((lane, x), commit.clone());
+        col_has_node.insert(x);
+        commit_x_map.insert(commit.oid, x);
+    }
+    
+    // 2.2 Route Connections
+    // Iterate from Oldest to Newest (Left to Right)
+    for (_idx, commit) in commits.iter().rev().enumerate() {
+        let child_oid = commit.oid;
+        let child_x = *commit_x_map.get(&child_oid).unwrap();
+        let child_lane = *commit_lane_map.get(&child_oid).unwrap_or(&0);
+        
+        for parent_oid in &commit.parent_oids {
+            if let Some(&parent_x) = commit_x_map.get(parent_oid) {
+                 let parent_lane = *commit_lane_map.get(parent_oid).unwrap_or(&0);
+                 route_connection(
+                     parent_x, parent_lane,
+                     child_x, child_lane,
+                     *lane_colors.get(&parent_lane).unwrap_or(&0),
+                     &mut grid,
+                     &col_has_node
+                 );
+            }
+        }
+    }
+    
+    // Phase 3: Chunking (pass tags and main_lane for tag positioning)
+    chunk_grid(
+        grid, 
+        commit_grid, 
+        num_lanes, 
+        lane_branches, 
+        lane_colors.clone(), 
+        head_commit_oid, 
+        &commit_lane_map, 
+        &commit_x_map,
+        commits, 
+        tags,
+        main_lane,
+        terminal_width
+    )
+}
+
+fn assign_lanes(
+    commits: &[CommitInfo], 
+    branches: &[BranchInfo]
+) -> (HashMap<Oid, usize>, HashMap<usize, usize>, usize, Vec<Vec<String>>) {
+    // Build OID -> row index and parent -> children mappings
+    let oid_to_row: HashMap<Oid, usize> = commits
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.oid, i))
+        .collect();
+    
+    // Build parent -> children map (like vertical graph does)
+    let mut parent_children: HashMap<Oid, Vec<Oid>> = HashMap::new();
+    for commit in commits {
+        for parent_oid in &commit.parent_oids {
+            if oid_to_row.contains_key(parent_oid) {
+                parent_children
+                    .entry(*parent_oid)
+                    .or_default()
+                    .push(commit.oid);
+            }
+        }
+    }
+    
+    // Fork points: commits with 2+ children
+    let fork_points: HashSet<Oid> = parent_children
+        .iter()
+        .filter(|(_, children)| children.len() >= 2)
+        .map(|(parent, _)| *parent)
+        .collect();
+    
+    // Merge points: commits with 2+ parents
+    let merge_points: HashSet<Oid> = commits
+        .iter()
+        .filter(|c| c.parent_oids.iter().filter(|p| oid_to_row.contains_key(p)).count() >= 2)
+        .map(|c| c.oid)
+        .collect();
+    
+    // Lane tracking: process commits from newest to oldest (like vertical graph)
+    // This mirrors the vertical graph's top-to-bottom approach
+    let mut commit_lane_map: HashMap<Oid, usize> = HashMap::new();
+    let mut lane_tracking: Vec<Option<Oid>> = Vec::new(); // What OID each lane is tracking
+    let mut lane_branches: Vec<Vec<String>> = Vec::new();
+    
+    // Map branch tips to their branch names
+    let mut tip_to_branch: HashMap<Oid, Vec<String>> = HashMap::new();
+    for branch in branches {
+        tip_to_branch
+            .entry(branch.tip_oid)
+            .or_default()
+            .push(branch.name.clone());
+    }
+    
+    // Sort branches: main/master first, then by name
+    let mut sorted_branches: Vec<&BranchInfo> = branches.iter().collect();
+    sorted_branches.sort_by(|a, b| {
+        let a_is_main = a.name == "master" || a.name == "main";
+        let b_is_main = b.name == "master" || b.name == "main";
+        if a_is_main && !b_is_main { std::cmp::Ordering::Less }
+        else if !a_is_main && b_is_main { std::cmp::Ordering::Greater }
+        else { a.name.cmp(&b.name) }
+    });
+    
+    // Process commits from newest to oldest (same order as input, which is topological)
+    for commit in commits {
+        // Check if any lane is tracking this commit's OID
+        let tracking_lane = lane_tracking
+            .iter()
+            .position(|l| l.map(|oid| oid == commit.oid).unwrap_or(false));
+        
+        let lane = if let Some(l) = tracking_lane {
+            l
+        } else {
+            // No lane tracking this commit, find an empty lane or create one
+            let empty_lane = lane_tracking.iter().position(|l| l.is_none());
+            if let Some(l) = empty_lane {
+                l
+            } else {
+                lane_tracking.push(None);
+                lane_branches.push(Vec::new());
+                lane_tracking.len() - 1
+            }
+        };
+        
+        // Add branch names to this lane if it's a branch tip
+        if let Some(branch_names) = tip_to_branch.get(&commit.oid) {
+            if lane < lane_branches.len() {
+                for name in branch_names {
+                    if !lane_branches[lane].contains(name) {
+                        lane_branches[lane].push(name.clone());
+                    }
+                }
+            }
+        }
+        
+        // Handle fork points (multiple lanes converging)
+        // Check if multiple lanes are tracking this commit
+        let tracking_lanes: Vec<usize> = lane_tracking
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.map(|oid| oid == commit.oid).unwrap_or(false))
+            .map(|(i, _)| i)
+            .collect();
+        
+        // If this is a fork point (multiple branches diverging from here),
+        // release extra lanes after recording them
+        if tracking_lanes.len() >= 2 {
+            let main_lane = *tracking_lanes.iter().min().unwrap();
+            for &l in &tracking_lanes {
+                if l != main_lane {
+                    lane_tracking[l] = None;
+                }
+            }
+        }
+        
+        // Clear this lane's tracking
+        if lane < lane_tracking.len() {
+            lane_tracking[lane] = None;
+        }
+        
+        // Record this commit's lane
+        commit_lane_map.insert(commit.oid, lane);
+        
+        // Set up tracking for parent commits
+        let valid_parents: Vec<Oid> = commit
+            .parent_oids
+            .iter()
+            .filter(|oid| oid_to_row.contains_key(oid))
+            .copied()
+            .collect();
+        
+        for (parent_idx, parent_oid) in valid_parents.iter().enumerate() {
+            // First parent continues on this lane
+            if parent_idx == 0 {
+                if lane < lane_tracking.len() {
+                    lane_tracking[lane] = Some(*parent_oid);
+                }
+            } else {
+                // Subsequent parents need new lanes (these are merge parents)
+                // Check if already tracked
+                let already_tracked = lane_tracking
+                    .iter()
+                    .any(|l| l.map(|oid| oid == *parent_oid).unwrap_or(false));
+                
+                if !already_tracked {
+                    // Find or create a new lane
+                    let empty_lane = lane_tracking.iter().position(|l| l.is_none());
+                    let new_lane = if let Some(l) = empty_lane {
+                        l
+                    } else {
+                        lane_tracking.push(None);
+                        lane_branches.push(Vec::new());
+                        lane_tracking.len() - 1
+                    };
+                    lane_tracking[new_lane] = Some(*parent_oid);
+                }
+            }
+        }
+    }
+    
+    let num_lanes = lane_branches.len().max(1);
+    
+    // Colors
+    let mut lane_colors = HashMap::new();
+    let mut color_assigner = ColorAssigner::new();
+    for i in 0..num_lanes {
+        lane_colors.insert(i, color_assigner.assign_color(i));
+    }
+    
+    (commit_lane_map, lane_colors, num_lanes, lane_branches)
+}
+
+fn route_connection(
+    p_x: usize, p_lane: usize,
+    c_x: usize, c_lane: usize,
+    color: usize,
+    grid: &mut HashMap<(usize, usize), HorizontalCellType>,
+    _col_has_node: &HashSet<usize>
+) {
+    // 1. Same Lane: Horizontal
+    if p_lane == c_lane {
+        for x in (p_x + 1)..c_x {
+            place_cell(grid, p_lane, x, HorizontalCellType::HLine(color));
+        }
+        return;
+    }
+    
+    // 2. Different Lane: Horizontal -> Vertical -> Horizontal
+    // Turn point: p_x + 1
+    let turn_x = p_x + 1;
+    
+    // If vertical segment is blocked by a node (Column Reservation Rule),
+    // strictly speaking we should have shifted everything.
+    // For MVP/first-pass: we rely on x = idx*2 spacing (every odd column is empty).
+    // turn_x is odd (since p_x is even). So it should be empty of nodes.
+    
+    // Segment A: Horizontal from p_x to turn_x (single step usually)
+    // Actually if turn_x == p_x + 1, we just draw the corner at turn_x?
+    // No, corners occupy a cell.
+    
+    // Corner 1 at (p_lane, turn_x)
+    // We arrive from Left. We leave Vertical.
+    if c_lane > p_lane {
+        // Going Down. Need Left-Down (╮ - HookDown)
+        place_cell(grid, p_lane, turn_x, HorizontalCellType::HookDown(color));
+    } else {
+        // Going Up. Need Left-Up (╯ - HookUp)
+        place_cell(grid, p_lane, turn_x, HorizontalCellType::HookUp(color));
+    }
+    
+    // Segment B: Vertical
+    let min_y = p_lane.min(c_lane) + 1;
+    let max_y = p_lane.max(c_lane);
+    
+    for y in min_y..max_y {
+        place_cell(grid, y, turn_x, HorizontalCellType::Pipe(color));
+    }
+    
+    // Corner 2 at (c_lane, turn_x)
+    // We arrive from Vertical. We leave Right.
+    if c_lane > p_lane {
+        // Coming from Top (Down). Turning Right. Need Up-Right (╰ - JumpUp)
+        place_cell(grid, c_lane, turn_x, HorizontalCellType::JumpUp(color));
+    } else {
+        // Coming from Bottom (Up). Turning Right. Need Down-Right (╭ - JumpDown)
+        place_cell(grid, c_lane, turn_x, HorizontalCellType::JumpDown(color));
+    }
+    
+    // Segment C: Horizontal from turn_x to c_x
+    for x in (turn_x + 1)..c_x {
+        place_cell(grid, c_lane, x, HorizontalCellType::HLine(color));
+    }
+}
+
+fn place_cell(grid: &mut HashMap<(usize, usize), HorizontalCellType>, lane: usize, col: usize, new_cell: HorizontalCellType) {
+    // Collision Resolution
+    let existing = grid.get(&(lane, col)).copied().unwrap_or(HorizontalCellType::Empty);
+    
+    let merged = match (existing, new_cell) {
+        (HorizontalCellType::Empty, _) => new_cell,
+        (_, HorizontalCellType::Empty) => existing,
+        
+        // CRITICAL: Never overwrite a Commit! Commits always win.
+        (HorizontalCellType::Commit(c), _) => HorizontalCellType::Commit(c),
+        (_, HorizontalCellType::Commit(c)) => HorizontalCellType::Commit(c),
+        
+        // Vertical + Horizontal = Cross
+        (HorizontalCellType::Pipe(v), HorizontalCellType::HLine(h)) => HorizontalCellType::Cross(v, h),
+        (HorizontalCellType::HLine(h), HorizontalCellType::Pipe(v)) => HorizontalCellType::Cross(v, h),
+        
+        // HLine + CornerDown (╭) -> TeeDown (┬)
+        (HorizontalCellType::HLine(h), HorizontalCellType::JumpDown(_)) => HorizontalCellType::TeeDown(h), 
+        (HorizontalCellType::JumpDown(_), HorizontalCellType::HLine(h)) => HorizontalCellType::TeeDown(h),
+        
+        // HLine + CornerUp (╰) -> TeeUp (┴)
+        (HorizontalCellType::HLine(h), HorizontalCellType::JumpUp(_)) => HorizontalCellType::TeeUp(h),
+        (HorizontalCellType::JumpUp(_), HorizontalCellType::HLine(h)) => HorizontalCellType::TeeUp(h),
+        
+        // HLine + HookDown (╮) -> TeeDown (┬)
+        (HorizontalCellType::HLine(h), HorizontalCellType::HookDown(_)) => HorizontalCellType::TeeDown(h),
+        (HorizontalCellType::HookDown(_), HorizontalCellType::HLine(h)) => HorizontalCellType::TeeDown(h),
+        
+        // HLine + HookUp (╯) -> TeeUp (┴)
+        (HorizontalCellType::HLine(h), HorizontalCellType::HookUp(_)) => HorizontalCellType::TeeUp(h),
+        (HorizontalCellType::HookUp(_), HorizontalCellType::HLine(h)) => HorizontalCellType::TeeUp(h),
+        
+        // Tee + Vertical Pipe -> Cross
+        (HorizontalCellType::TeeDown(h), HorizontalCellType::Pipe(v)) => HorizontalCellType::Cross(v, h),
+        (HorizontalCellType::TeeUp(h), HorizontalCellType::Pipe(v)) => HorizontalCellType::Cross(v, h),
+        
+        // Pipe + JumpUp (╰) -> TeeRight (├) - vertical pipe with branch going right
+        // This happens when a vertical line passes through and another branch forks right
+        (HorizontalCellType::Pipe(v), HorizontalCellType::JumpUp(_)) => HorizontalCellType::TeeRight(v),
+        (HorizontalCellType::JumpUp(_), HorizontalCellType::Pipe(v)) => HorizontalCellType::TeeRight(v),
+        
+        // Pipe + JumpDown (╭) -> TeeRight (├) - vertical pipe with branch going right
+        (HorizontalCellType::Pipe(v), HorizontalCellType::JumpDown(_)) => HorizontalCellType::TeeRight(v),
+        (HorizontalCellType::JumpDown(_), HorizontalCellType::Pipe(v)) => HorizontalCellType::TeeRight(v),
+        
+        // Pipe + HookUp (╯) -> TeeLeft (┤) - vertical pipe with branch coming from left
+        (HorizontalCellType::Pipe(v), HorizontalCellType::HookUp(_)) => HorizontalCellType::TeeLeft(v),
+        (HorizontalCellType::HookUp(_), HorizontalCellType::Pipe(v)) => HorizontalCellType::TeeLeft(v),
+        
+        // Pipe + HookDown (╮) -> TeeLeft (┤) - vertical pipe with branch coming from left
+        (HorizontalCellType::Pipe(v), HorizontalCellType::HookDown(_)) => HorizontalCellType::TeeLeft(v),
+        (HorizontalCellType::HookDown(_), HorizontalCellType::Pipe(v)) => HorizontalCellType::TeeLeft(v),
+        
+        // TeeRight + corner combinations
+        (HorizontalCellType::TeeRight(v), HorizontalCellType::JumpUp(_)) => HorizontalCellType::TeeRight(v),
+        (HorizontalCellType::TeeRight(v), HorizontalCellType::JumpDown(_)) => HorizontalCellType::TeeRight(v),
+        
+        // Corner + Corner at same position (two branches from same point)
+        // HookDown + HookDown -> keep existing (both going down from same horizontal)
+        (HorizontalCellType::HookDown(c), HorizontalCellType::HookDown(_)) => HorizontalCellType::HookDown(c),
+        (HorizontalCellType::HookUp(c), HorizontalCellType::HookUp(_)) => HorizontalCellType::HookUp(c),
+        
+        // Default: keep existing (safer than overwriting)
+        _ => existing,
+    };
+    
+    grid.insert((lane, col), merged);
+}
+
+fn chunk_grid(
+    grid: HashMap<(usize, usize), HorizontalCellType>,
+    commit_grid: HashMap<(usize, usize), CommitInfo>,
+    num_lanes: usize,
+    lane_branches: Vec<Vec<String>>,
+    lane_colors: HashMap<usize, usize>,
+    head_oid: Option<Oid>, 
+    commit_lane_map: &HashMap<Oid, usize>,
+    commit_x_map: &HashMap<Oid, usize>,
+    _commits: &[CommitInfo],
+    tags: &[TagInfo],
+    main_lane: usize,
+    terminal_width: usize
+) -> HorizontalGraphLayout {
+    // Build commit OID -> (lane, column) map for tag positioning
+    let commit_positions: HashMap<Oid, (usize, usize)> = commit_x_map
+        .iter()
+        .filter_map(|(oid, &col)| {
+            commit_lane_map.get(oid).map(|&lane| (*oid, (lane, col)))
+        })
+        .collect();
+    
+
+    
+    // Calculate tag positions with alternation for main lane
+    let tag_displays = determine_tag_positions(tags, &commit_positions, &lane_colors, main_lane);
+    
+    // Convert sparse grid to chunks
+    // Determine max column
+    let max_col = grid.keys().map(|(_, x)| *x).max().unwrap_or(0);
+    let total_columns = max_col + 1;
+    
+    // Chunk size
+    // The terminal_width passed is already just the graph panel width (legend is separate)
+    // Only subtract 2 for the panel borders
+    let graph_width = terminal_width.saturating_sub(2).max(10);
+    let chars_per_col = 2;  // Compact: each column is 2 chars (symbol + connector)
+    let cols_per_chunk = graph_width / chars_per_col;
+    
+    // Right-align: pad the left side so that max_col ends at a chunk boundary
+    // This ensures the newest commits (after reversal) fill Chunk 1 completely
+    let remainder = total_columns % cols_per_chunk;
+    let pad_left = if remainder == 0 { 0 } else { cols_per_chunk - remainder };
+    let total_columns_padded = total_columns + pad_left;
+    
+    let mut chunks = Vec::new();
+    let mut chunk_idx = 0;
+    
+    for start_col in (0..total_columns_padded).step_by(cols_per_chunk) {
+        let end_col = (start_col + cols_per_chunk).min(total_columns_padded);
+        let width = end_col - start_col;
+        
+        let mut cell_matrix = vec![vec![HorizontalCellType::Empty; width]; num_lanes];
+        let mut commit_matrix = vec![vec![None; width]; num_lanes];
+        let mut active_lanes = HashSet::new();
+        
+        for lane in 0..num_lanes {
+            for col in 0..width {
+                let abs_col = start_col + col;
+                // Original grid coordinates are 0-based, padded coordinates are shifted
+                // Grid lookup needs to subtract pad_left to get original coordinate
+                let orig_col = abs_col.saturating_sub(pad_left);
+                
+                // Only look up if we're past the padding
+                if abs_col >= pad_left {
+                    if let Some(&cell) = grid.get(&(lane, orig_col)) {
+                        cell_matrix[lane][col] = cell;
+                        active_lanes.insert(lane);
+                    }
+                    if let Some(c) = commit_grid.get(&(lane, orig_col)) {
+                        commit_matrix[lane][col] = Some(c.clone());
+                    }
+                }
+            }
+        }
+        
+        // Find tags that belong to this chunk
+        // Tags reference original column indices, so we need to check against orig_col range
+        let orig_start = start_col.saturating_sub(pad_left);
+        let orig_end = end_col.saturating_sub(pad_left);
+        
+        let chunk_tags: Vec<TagDisplay> = tag_displays
+            .iter()
+            .filter(|t| t.column >= orig_start && t.column < orig_end)
+            .map(|t| TagDisplay {
+                name: t.name.clone(),
+                // Map grid column to cell array index:
+                // The cell array index = grid_column - orig_start + pad_left
+                // But chunk.start_column = start_col, and we iterate cells from 0 to width
+                // where cells[col] corresponds to grid column (start_col + col - pad_left)
+                // So: col = grid_column - orig_start + pad_left
+                //        = t.column - (start_col - pad_left) + pad_left  
+                //        = t.column - start_col + 2*pad_left
+                // Actually simpler: the cells array covers [start_col..end_col)
+                // cells[i] = grid[(lane, start_col + i - pad_left)] if i >= pad_left
+                // We want: cells[?] to be at grid column t.column
+                // So: start_col + ? - pad_left = t.column
+                //     ? = t.column - start_col + pad_left
+                column: t.column.saturating_sub(orig_start),
+                position: t.position,
+                lane: t.lane,
+                color_index: t.color_index,
+            })
+            .collect();
+        
+        chunks.push(HorizontalChunk {
+            index: chunk_idx,
+            start_column: start_col,
+            end_column: end_col,
+            lane_count: num_lanes,
+            cells: cell_matrix,
+            commits: commit_matrix,
+            active_lanes,
+            tags: chunk_tags,
+        });
+        chunk_idx += 1;
+    }
+    
+    // Reverse chunks so newest commits appear first (Chunk 1 = newest)
+    chunks.reverse();
+    // Re-index the chunks
+    for (new_idx, chunk) in chunks.iter_mut().enumerate() {
+        chunk.index = new_idx;
+    }
+    
+    // Build Lanes Info
+    let mut lanes_info = Vec::new();
+    for (i, names) in lane_branches.iter().enumerate() {
+        // Is Head?
+        let is_head = if let Some(h) = head_oid {
+            commit_lane_map.get(&h) == Some(&i)
+        } else { false };
+        
+        lanes_info.push(LaneInfo {
+            lane: i,
+            branch_names: names.clone(),
+            color_index: *lane_colors.get(&i).unwrap_or(&0),
+            is_head,
+            last_chunk_index: None, // Todo: calc
+        });
+    }
+    
+    // Determine selection - newest commits are now in chunk 0
+    let newest_col = commit_grid.keys().map(|(_, x)| *x).max().unwrap_or(0);
+    // Find commit at newest_col
+    let newest_lane = commit_grid.iter()
+        .find(|&(&(_, x), _)| x == newest_col)
+        .map(|(&(l, _), _)| l)
+        .unwrap_or(0);
+    
+    // After reversal, newest commits are in chunk 0
+    // Account for pad_left when calculating position in padded coordinate space
+    let padded_col = newest_col + pad_left;
+    let original_chunk_idx = padded_col / cols_per_chunk;
+    let original_chunk_count = chunks.len();
+    // After reversal: new_idx = (original_chunk_count - 1) - original_idx
+    let new_chunk_idx = original_chunk_count.saturating_sub(1).saturating_sub(original_chunk_idx);
+    let final_col_rel = padded_col % cols_per_chunk;
+
+    HorizontalGraphLayout {
+        chunks,
+        lanes: lanes_info,
+        selection: HorizontalSelection {
+            chunk_index: new_chunk_idx,
+            column: final_col_rel,
+            lane: newest_lane,
+        },
+        total_columns,
+        main_lane,
+    }
+}
+
+/// Determine tag positions based on lane relative to main lane
+/// - Commits on lanes ABOVE main (lane < main_lane): tags on TOP
+/// - Commits on lanes BELOW main (lane > main_lane): tags on BOTTOM
+/// - Commits on MAIN lane: alternate between TOP and BOTTOM
+fn determine_tag_positions(
+    tags: &[TagInfo],
+    commit_positions: &HashMap<Oid, (usize, usize)>,
+    lane_colors: &HashMap<usize, usize>,
+    main_lane: usize,
+) -> Vec<TagDisplay> {
+    let mut result = Vec::new();
+    let mut main_lane_alternator = false; // false = top, true = bottom
+    
+    // Collect tags with their commit positions
+    let mut tagged_commits: Vec<(&TagInfo, usize, usize)> = tags
+        .iter()
+        .filter_map(|tag| {
+            commit_positions.get(&tag.target_oid)
+                .map(|&(lane, col)| (tag, lane, col))
+        })
+        .collect();
+    
+    // Sort by column (left to right) for consistent alternation
+    tagged_commits.sort_by_key(|(_, _, col)| *col);
+    
+    for (tag, lane, column) in tagged_commits {
+        let position = if lane < main_lane {
+            // Branch above main -> tag on top
+            TagPosition::Top
+        } else if lane > main_lane {
+            // Branch below main -> tag on bottom
+            TagPosition::Bottom
+        } else {
+            // Main lane -> alternate
+            let pos = if main_lane_alternator {
+                TagPosition::Bottom
+            } else {
+                TagPosition::Top
+            };
+            main_lane_alternator = !main_lane_alternator;
+            pos
+        };
+        
+        result.push(TagDisplay {
+            name: tag.name.clone(),
+            column,
+            position,
+            lane,
+            color_index: *lane_colors.get(&lane).unwrap_or(&0),
+        });
+    }
+    
+    result
 }
 
 /// Build a graph from commit list
@@ -731,3 +1467,203 @@ fn build_fork_connector_cells(
 
     cells
 }
+/// Get the color index for a given lane from the layout
+/// This is a helper function for the horizontal graph view
+pub fn color_index_for_lane(
+    layout: &HorizontalGraphLayout,
+    lane: usize,
+) -> usize {
+    layout
+        .lanes
+        .get(lane)
+        .map(|l| l.color_index)
+        .unwrap_or(0)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Oid;
+    use chrono::Local;
+
+    fn create_mock_commit(oid_str: &str, parents: Vec<&str>, message: &str) -> CommitInfo {
+        let oid = Oid::from_str(oid_str).unwrap();
+        let parent_oids = parents.iter().map(|p| Oid::from_str(p).unwrap()).collect();
+        CommitInfo {
+            oid,
+            short_id: oid_str[..7].to_string(),
+            author_name: "Test".to_string(),
+            author_email: "test@example.com".to_string(),
+            timestamp: Local::now(),
+            message: message.to_string(),
+            full_message: message.to_string(),
+            parent_oids,
+        }
+    }
+
+    fn create_mock_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
+        BranchInfo {
+            name: name.to_string(),
+            is_head,
+            is_remote: false,
+            upstream: None,
+            tip_oid: Oid::from_str(tip).unwrap(),
+        }
+    }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Oid;
+    use chrono::Local;
+
+    fn create_mock_commit(oid_str: &str, parents: Vec<&str>, message: &str) -> CommitInfo {
+        let oid = Oid::from_str(oid_str).unwrap();
+        let parent_oids = parents.iter().map(|p| Oid::from_str(p).unwrap()).collect();
+        CommitInfo {
+            oid,
+            short_id: oid_str[..7].to_string(),
+            author_name: "Test".to_string(),
+            author_email: "test@example.com".to_string(),
+            timestamp: Local::now(),
+            message: message.to_string(),
+            full_message: message.to_string(),
+            parent_oids,
+        }
+    }
+
+    fn create_mock_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
+        BranchInfo {
+            name: name.to_string(),
+            is_head,
+            is_remote: false,
+            upstream: None,
+            tip_oid: Oid::from_str(tip).unwrap(),
+        }
+    }
+    
+    fn layout_to_ascii(layout: &HorizontalGraphLayout) -> String {
+        let mut lines = Vec::new();
+        if layout.chunks.is_empty() { return String::new(); }
+
+        for lane in 0..layout.lanes.len() {
+            let mut line = String::new();
+            for chunk in &layout.chunks {
+                 if lane < chunk.cells.len() {
+                     for cell in &chunk.cells[lane] {
+                         let ch = match cell {
+                             HorizontalCellType::Empty => ' ',
+                             HorizontalCellType::Commit(_) => '●',
+                             HorizontalCellType::Pipe(_) => '│',
+                             HorizontalCellType::HLine(_) => '─',
+                             HorizontalCellType::JumpUp(_) => '╰',
+                             HorizontalCellType::JumpDown(_) => '╭',
+                             HorizontalCellType::HookUp(_) => '╯',
+                             HorizontalCellType::HookDown(_) => '╮',
+                             HorizontalCellType::TeeDown(_) => '┬',
+                             HorizontalCellType::TeeUp(_) => '┴',
+                             HorizontalCellType::TeeLeft(_) => '┤',
+                             HorizontalCellType::TeeRight(_) => '├',
+                             HorizontalCellType::Cross(_, _) => '┼',
+                         };
+                         line.push(ch);
+                     }
+                 }
+            }
+            lines.push(line);
+        }
+        lines.join("\n")
+    }
+
+    #[test]
+    fn test_horizontal_graph_linear() {
+        // C1 <- C2 <- C3
+        let c1 = create_mock_commit("1111111111111111111111111111111111111111", vec![], "Initial");
+        let c2 = create_mock_commit("2222222222222222222222222222222222222222", vec!["1111111111111111111111111111111111111111"], "Second");
+        let c3 = create_mock_commit("3333333333333333333333333333333333333333", vec!["2222222222222222222222222222222222222222"], "Third");
+        
+        // Reverse chronological order input
+        let commits = vec![c3.clone(), c2.clone(), c1.clone()];
+        let branches = vec![create_mock_branch("master", "3333333333333333333333333333333333333333", true)];
+        
+        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c3.oid), 80);
+        
+        // Lane 0: ●(c1) ─ ●(c2) ─ ●(c3)
+        // With spaced placement (x = idx * 2), commits are at even columns with HLine between.
+        // C1 at x=0, C2 at x=2, C3 at x=4. HLine cells at odd columns (1, 3).
+        // Note: Right-alignment may add leading spaces, so we trim.
+        let ascii = layout_to_ascii(&layout);
+        assert_eq!(ascii.trim_start(), "●─●─●");
+        
+        assert_eq!(layout.chunks.len(), 1);
+        assert_eq!(layout.lanes.len(), 1);
+    }
+
+    #[test]
+    fn test_horizontal_graph_topology() {
+        // Create a topology:
+        // C1 (Main)
+        // | \
+        // |  C2 (Feature)
+        // C3 (Main)
+        // | /
+        // C4 (Merge)
+        
+        let oid_c1 = "1111111111111111111111111111111111111111"; // Oldest
+        let oid_c2 = "2222222222222222222222222222222222222222";
+        let oid_c3 = "3333333333333333333333333333333333333333";
+        let oid_c4 = "4444444444444444444444444444444444444444"; // Newest
+        
+        let c1 = create_mock_commit(oid_c1, vec![], "C1");
+        let c2 = create_mock_commit(oid_c2, vec![oid_c1], "C2");
+        let c3 = create_mock_commit(oid_c3, vec![oid_c1], "C3");
+        let c4 = create_mock_commit(oid_c4, vec![oid_c3, oid_c2], "C4 (Merge)");
+        
+        let commits = vec![c4.clone(), c3.clone(), c2.clone(), c1.clone()];
+        let branches = vec![
+            create_mock_branch("main", oid_c4, true),
+            create_mock_branch("feature", oid_c2, false),
+        ];
+        
+        let layout = build_horizontal_graph(&commits, &branches, &[], None, Some(c4.oid), 80);
+        
+        // Expected Grid Analysis:
+        // C1 (x=0, lane=0)
+        // C2 (x=2, lane=1)
+        // C3 (x=4, lane=0)
+        // C4 (x=6, lane=0)
+
+        // Connections:
+        // C1->C2: P(0,0)->C(1,2). Turn=1.
+        //   Corner 1 at (0,1): Going Down -> HookDown(╮).
+        //   Corner 2 at (1,1): Coming Down -> JumpUp(╰).
+        //
+        // C1->C3: Same lane. HLine from x=1 to x=3.
+        //   Collision at (0,1): HookDown + HLine = TeeDown(┬).
+        //
+        // C3->C4: Same lane. HLine at x=5.
+        //
+        // C2->C4: P(1,2)->C(0,6). Turn=3.
+        //   Corner 1 at (1,3): Going Up -> HookUp(╯).
+        //   Corner 2 at (0,3): Coming Up -> JumpDown(╭).
+        //   Collision at (0,3): HLine(from C1->C3) + JumpDown = TeeDown(┬).
+        //
+        // Row 0: ●┬─┬●─●  (C1, TeeDown, HLine, TeeDown, C3, HLine, C4)
+        // Row 1:  ╰●╯     (JumpUp, C2, HookUp)
+
+        let ascii = layout_to_ascii(&layout);
+        let expected_lines = vec![
+            "●┬─┬●─●",
+            "╰●╯"  // Trim leading space since row 1 may be aligned
+        ];
+        
+        let actual_lines: Vec<&str> = ascii.lines().collect();
+        println!("Actual:\n{}", ascii);
+        assert_eq!(actual_lines.len(), 2);
+        // Trim both leading and trailing whitespace due to right-alignment padding
+        assert_eq!(actual_lines[0].trim(), expected_lines[0]);
+        assert_eq!(actual_lines[1].trim(), expected_lines[1]);
+    }
+}
+}
+
+

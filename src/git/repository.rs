@@ -8,7 +8,7 @@ use git2::Repository;
 
 use git2::Oid;
 
-use super::{BranchInfo, CommitInfo};
+use super::{BranchInfo, CommitInfo, TagInfo};
 
 pub struct GitRepository {
     pub repo: Repository,
@@ -52,9 +52,28 @@ impl GitRepository {
         for branch_result in self.repo.branches(None)? {
             let (branch, _) = branch_result?;
             if let Some(oid) = branch.get().target() {
-                revwalk.push(oid)?;
+                // If branch target is an annotated tag (unlikely for branches but possible for detached HEAD refs), peel it
+                if let Ok(commit) = branch.get().peel_to_commit() {
+                    revwalk.push(commit.id())?;
+                } else {
+                     revwalk.push(oid)?;
+                }
             }
         }
+
+        // Include all tags to ensure tagged commits are visible
+        // This is crucial if the tag is on a commit not reachable from any local/remote branch
+        // or if the branch hasn't been picked up for some reason.
+        self.repo.tag_foreach(|_, name_bytes| {
+            if let Ok(name_str) = std::str::from_utf8(name_bytes) {
+                 if let Ok(reference) = self.repo.find_reference(name_str) {
+                     if let Ok(commit) = reference.peel_to_commit() {
+                         let _ = revwalk.push(commit.id());
+                     }
+                 }
+            }
+            true
+        })?;
 
         let mut commits = Vec::new();
         for oid_result in revwalk.take(max_count) {
@@ -69,6 +88,11 @@ impl GitRepository {
     /// Get branch list
     pub fn get_branches(&self) -> Result<Vec<BranchInfo>> {
         BranchInfo::list_all(&self.repo)
+    }
+
+    /// Get tag list
+    pub fn get_tags(&self) -> Result<Vec<TagInfo>> {
+        TagInfo::list_all(&self.repo)
     }
 
     /// Get the current HEAD name

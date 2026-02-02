@@ -18,6 +18,7 @@ pub struct StatusBar<'a> {
     message: Option<&'a str>,
     is_fetching: bool,
     search_info: Option<String>,
+    orientation_text: Option<String>,
 }
 
 impl<'a> StatusBar<'a> {
@@ -43,6 +44,16 @@ impl<'a> StatusBar<'a> {
             _ => None,
         };
 
+        // Generate orientation text
+        let orientation_text = if matches!(app.mode, AppMode::Normal) {
+            Some(match app.current_orientation {
+                crate::git::graph::GraphOrientation::Vertical => "VERT",
+                crate::git::graph::GraphOrientation::Horizontal => "HORZ",
+            }.to_string())
+        } else {
+            None
+        };
+
         Self {
             mode: &app.mode,
             repo_path: &app.repo_path,
@@ -51,6 +62,7 @@ impl<'a> StatusBar<'a> {
             message: app.get_message(),
             is_fetching: app.is_fetching(),
             search_info,
+            orientation_text,
         }
     }
 }
@@ -90,6 +102,19 @@ impl<'a> Widget for StatusBar<'a> {
             spans.push(Span::raw(" "));
         }
 
+        // Orientation badge
+        if let Some(orientation_text) = &self.orientation_text {
+            let orientation_style = Style::default()
+                .fg(Color::Black)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD);
+            spans.push(Span::styled(
+                format!(" {} ", orientation_text),
+                orientation_style,
+            ));
+            spans.push(Span::raw(" "));
+        }
+
         // Key hints (vary by mode)
         match self.mode {
             AppMode::Normal => match self.message {
@@ -122,6 +147,8 @@ impl<'a> Widget for StatusBar<'a> {
                     spans.push(Span::styled("move ", desc_style));
                     spans.push(Span::styled(" Enter ", key_style));
                     spans.push(Span::styled("checkout ", desc_style));
+                    spans.push(Span::styled(" O ", key_style));
+                    spans.push(Span::styled("orientation ", desc_style));
                     spans.push(Span::styled(" b ", key_style));
                     spans.push(Span::styled("branch ", desc_style));
                     spans.push(Span::styled(" f ", key_style));

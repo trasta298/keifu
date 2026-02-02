@@ -2,12 +2,42 @@
 
 use std::fs;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::git::graph::GraphOrientation;
+
+/// Graph configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GraphConfig {
+    /// Graph layout orientation
+    pub orientation: GraphOrientation,
+    /// Direction for horizontal layout (newest on left or right)
+    pub horizontal_direction: HorizontalDirection,
+}
+
+impl Default for GraphConfig {
+    fn default() -> Self {
+        Self {
+            orientation: GraphOrientation::Vertical,
+            horizontal_direction: HorizontalDirection::LeftToRight,
+        }
+    }
+}
+
+/// Direction for horizontal layout
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HorizontalDirection {
+    LeftToRight, // Newest on left
+    RightToLeft, // Newest on right
+}
 
 /// Application configuration
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub graph: GraphConfig,
     pub refresh: RefreshConfig,
 }
 
