@@ -53,7 +53,6 @@ you can normalize this in `config.toml`:
 events_per_notch = 6
 ```
 
-- If omitted, keifu uses legacy behavior (coalesced burst => one move),
-  matching the `c7abeee` behavior.
+- If omitted, keifu uses legacy behavior (coalesced burst => one move).
 - `1`: no normalization (one event -> one move)
 - `2`, `3`, ...: N events are treated as one wheel notch
