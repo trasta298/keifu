@@ -28,9 +28,7 @@ pub fn drain_events() -> Result<Vec<Event>> {
         }
         // If scroll events detected, briefly wait for same-notch follow-up events
         // that may arrive a few ms later (e.g. Ghostty/macOS sends ~2 events per notch)
-        if events.iter().any(is_scroll_event)
-            && event::poll(Duration::from_millis(10))?
-        {
+        if events.iter().any(is_scroll_event) && event::poll(Duration::from_millis(10))? {
             events.push(event::read()?);
             while event::poll(Duration::from_millis(0))? {
                 events.push(event::read()?);

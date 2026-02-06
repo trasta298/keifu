@@ -71,11 +71,8 @@ fn main() -> Result<()> {
         // Coalesce and process scroll events (Normal mode only)
         if matches!(app.mode, AppMode::Normal) {
             let scroll_delta = coalesce_scroll_events(&events);
-            let scroll_steps = scroll_delta_to_steps(
-                scroll_delta,
-                scroll_events_per_notch,
-                &mut scroll_remainder,
-            );
+            let scroll_steps =
+                scroll_delta_to_steps(scroll_delta, scroll_events_per_notch, &mut scroll_remainder);
             if scroll_steps != 0 {
                 if let Err(e) = app.handle_action(Action::ScrollMove(scroll_steps)) {
                     app.show_error(format!("{e}"));
