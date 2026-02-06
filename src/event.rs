@@ -5,17 +5,6 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyEvent, MouseEventKind};
 
-use crate::action::Action;
-
-/// Poll for events (100ms timeout)
-pub fn poll_event() -> Result<Option<Event>> {
-    if event::poll(Duration::from_millis(100))? {
-        Ok(Some(event::read()?))
-    } else {
-        Ok(None)
-    }
-}
-
 /// Extract key event
 pub fn get_key_event(event: &Event) -> Option<KeyEvent> {
     if let Event::Key(key) = event {
@@ -39,12 +28,12 @@ pub fn drain_events() -> Result<Vec<Event>> {
         }
         // If scroll events detected, briefly wait for same-notch follow-up events
         // that may arrive a few ms later (e.g. Ghostty/macOS sends ~2 events per notch)
-        if events.iter().any(|e| is_scroll_event(e)) {
-            if event::poll(Duration::from_millis(10))? {
+        if events.iter().any(is_scroll_event)
+            && event::poll(Duration::from_millis(10))?
+        {
+            events.push(event::read()?);
+            while event::poll(Duration::from_millis(0))? {
                 events.push(event::read()?);
-                while event::poll(Duration::from_millis(0))? {
-                    events.push(event::read()?);
-                }
             }
         }
     }
@@ -74,58 +63,58 @@ pub fn coalesce_scroll_events(events: &[Event]) -> i32 {
     })
 }
 
-/// Get scroll action from coalesced delta
-pub fn scroll_delta_to_action(delta: i32) -> Option<Action> {
-    match delta.cmp(&0) {
-        std::cmp::Ordering::Less => Some(Action::MoveUp),
-        std::cmp::Ordering::Greater => Some(Action::MoveDown),
-        std::cmp::Ordering::Equal => None,
-    }
-}
-
-/// Convert raw scroll delta to normalized movement steps.
+/// Convert raw scroll delta to movement steps.
 ///
-/// This is used only when `[scroll].events_per_notch` is configured.
-/// If `events_per_notch = 1`, the raw delta is returned as-is.
-/// If `events_per_notch > 1`, deltas are grouped with frame-to-frame remainder carry.
-pub fn scroll_delta_to_steps(delta: i32, events_per_notch: i32, remainder: &mut i32) -> i32 {
-    let events_per_notch = events_per_notch.max(1);
-    if events_per_notch == 1 {
+/// When `events_per_notch` is `None` (default), each scroll batch produces exactly
+/// one step in the direction of the net delta (sign-only).
+/// When `Some(1)`, the raw delta is returned as-is.
+/// When `Some(n)` with n > 1, deltas are grouped with frame-to-frame remainder carry.
+pub fn scroll_delta_to_steps(
+    delta: i32,
+    events_per_notch: Option<i32>,
+    remainder: &mut i32,
+) -> i32 {
+    let Some(epn) = events_per_notch else {
+        *remainder = 0;
+        return delta.signum();
+    };
+
+    let epn = epn.max(1);
+    if epn == 1 {
         *remainder = 0;
         return delta;
     }
 
     let total = delta + *remainder;
-    let steps = total / events_per_notch;
-    *remainder = total % events_per_notch;
+    let steps = total / epn;
+    *remainder = total % epn;
     steps
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{scroll_delta_to_action, scroll_delta_to_steps};
-    use crate::action::Action;
+    use super::scroll_delta_to_steps;
 
     #[test]
-    fn delta_to_action_uses_sign_only() {
-        assert_eq!(scroll_delta_to_action(-3), Some(Action::MoveUp));
-        assert_eq!(scroll_delta_to_action(2), Some(Action::MoveDown));
-        assert_eq!(scroll_delta_to_action(0), None);
+    fn steps_uses_sign_only_when_none() {
+        let mut remainder = 0;
+        assert_eq!(scroll_delta_to_steps(-3, None, &mut remainder), -1);
+        assert_eq!(scroll_delta_to_steps(2, None, &mut remainder), 1);
+        assert_eq!(scroll_delta_to_steps(0, None, &mut remainder), 0);
     }
 
     #[test]
     fn steps_passthrough_when_events_per_notch_is_one() {
         let mut remainder = 0;
-        let steps = scroll_delta_to_steps(5, 1, &mut remainder);
-        assert_eq!(steps, 5);
+        assert_eq!(scroll_delta_to_steps(5, Some(1), &mut remainder), 5);
         assert_eq!(remainder, 0);
     }
 
     #[test]
     fn steps_keep_remainder_across_batches() {
         let mut remainder = 0;
-        let first = scroll_delta_to_steps(2, 6, &mut remainder);
-        let second = scroll_delta_to_steps(4, 6, &mut remainder);
+        let first = scroll_delta_to_steps(2, Some(6), &mut remainder);
+        let second = scroll_delta_to_steps(4, Some(6), &mut remainder);
 
         assert_eq!(first, 0);
         assert_eq!(second, 1);

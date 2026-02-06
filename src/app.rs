@@ -271,8 +271,8 @@ impl App {
         })
     }
 
-    /// Override value for scroll normalization (events per wheel notch)
-    pub fn scroll_events_per_notch_override(&self) -> Option<i32> {
+    /// Configured scroll normalization (events per wheel notch)
+    pub fn scroll_events_per_notch(&self) -> Option<i32> {
         self.config.scroll.events_per_notch
     }
 
@@ -733,6 +733,9 @@ impl App {
             }
             Action::MoveDown => {
                 self.move_selection(1);
+            }
+            Action::ScrollMove(steps) => {
+                self.move_selection(steps);
             }
             Action::PageUp => {
                 self.move_selection(-10);

@@ -6,10 +6,7 @@ use clap::Parser;
 use keifu::{
     action::Action,
     app::{App, AppMode},
-    event::{
-        coalesce_scroll_events, drain_events, get_key_event, scroll_delta_to_action,
-        scroll_delta_to_steps,
-    },
+    event::{coalesce_scroll_events, drain_events, get_key_event, scroll_delta_to_steps},
     keybindings::map_key_to_action,
     tui, ui,
 };
@@ -33,7 +30,7 @@ fn main() -> Result<()> {
 
     // Initialize application
     let mut app = App::new()?;
-    let scroll_events_per_notch = app.scroll_events_per_notch_override();
+    let scroll_events_per_notch = app.scroll_events_per_notch();
     let mut scroll_remainder = 0;
 
     // Initialize terminal
@@ -65,7 +62,7 @@ fn main() -> Result<()> {
             if let Some(key) = get_key_event(event) {
                 if let Some(action) = map_key_to_action(key, &app.mode) {
                     if let Err(e) = app.handle_action(action) {
-                        app.show_error(format!("{}", e));
+                        app.show_error(format!("{e}"));
                     }
                 }
             }
@@ -74,25 +71,14 @@ fn main() -> Result<()> {
         // Coalesce and process scroll events (Normal mode only)
         if matches!(app.mode, AppMode::Normal) {
             let scroll_delta = coalesce_scroll_events(&events);
-            if let Some(events_per_notch) = scroll_events_per_notch {
-                let scroll_steps =
-                    scroll_delta_to_steps(scroll_delta, events_per_notch, &mut scroll_remainder);
-                if scroll_steps != 0 {
-                    let action = if scroll_steps < 0 {
-                        Action::MoveUp
-                    } else {
-                        Action::MoveDown
-                    };
-                    for _ in 0..scroll_steps.unsigned_abs() {
-                        if let Err(e) = app.handle_action(action.clone()) {
-                            app.show_error(format!("{}", e));
-                            break;
-                        }
-                    }
-                }
-            } else if let Some(action) = scroll_delta_to_action(scroll_delta) {
-                if let Err(e) = app.handle_action(action) {
-                    app.show_error(format!("{}", e));
+            let scroll_steps = scroll_delta_to_steps(
+                scroll_delta,
+                scroll_events_per_notch,
+                &mut scroll_remainder,
+            );
+            if scroll_steps != 0 {
+                if let Err(e) = app.handle_action(Action::ScrollMove(scroll_steps)) {
+                    app.show_error(format!("{e}"));
                 }
             }
         }
