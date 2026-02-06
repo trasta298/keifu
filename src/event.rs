@@ -82,3 +82,53 @@ pub fn scroll_delta_to_action(delta: i32) -> Option<Action> {
         std::cmp::Ordering::Equal => None,
     }
 }
+
+/// Convert raw scroll delta to normalized movement steps.
+///
+/// This is used only when `[scroll].events_per_notch` is configured.
+/// If `events_per_notch = 1`, the raw delta is returned as-is.
+/// If `events_per_notch > 1`, deltas are grouped with frame-to-frame remainder carry.
+pub fn scroll_delta_to_steps(delta: i32, events_per_notch: i32, remainder: &mut i32) -> i32 {
+    let events_per_notch = events_per_notch.max(1);
+    if events_per_notch == 1 {
+        *remainder = 0;
+        return delta;
+    }
+
+    let total = delta + *remainder;
+    let steps = total / events_per_notch;
+    *remainder = total % events_per_notch;
+    steps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scroll_delta_to_action, scroll_delta_to_steps};
+    use crate::action::Action;
+
+    #[test]
+    fn delta_to_action_uses_sign_only() {
+        assert_eq!(scroll_delta_to_action(-3), Some(Action::MoveUp));
+        assert_eq!(scroll_delta_to_action(2), Some(Action::MoveDown));
+        assert_eq!(scroll_delta_to_action(0), None);
+    }
+
+    #[test]
+    fn steps_passthrough_when_events_per_notch_is_one() {
+        let mut remainder = 0;
+        let steps = scroll_delta_to_steps(5, 1, &mut remainder);
+        assert_eq!(steps, 5);
+        assert_eq!(remainder, 0);
+    }
+
+    #[test]
+    fn steps_keep_remainder_across_batches() {
+        let mut remainder = 0;
+        let first = scroll_delta_to_steps(2, 6, &mut remainder);
+        let second = scroll_delta_to_steps(4, 6, &mut remainder);
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 1);
+        assert_eq!(remainder, 0);
+    }
+}

@@ -271,6 +271,11 @@ impl App {
         })
     }
 
+    /// Override value for scroll normalization (events per wheel notch)
+    pub fn scroll_events_per_notch_override(&self) -> Option<i32> {
+        self.config.scroll.events_per_notch
+    }
+
     /// Clear all diff caches
     fn clear_all_diff_caches(&mut self) {
         self.diff_cache = None;

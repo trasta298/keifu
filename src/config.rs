@@ -9,6 +9,7 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct Config {
     pub refresh: RefreshConfig,
+    pub scroll: ScrollConfig,
 }
 
 /// Auto-refresh configuration
@@ -38,6 +39,15 @@ impl Default for RefreshConfig {
     }
 }
 
+/// Scroll normalization configuration
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ScrollConfig {
+    /// Number of scroll events treated as one wheel notch (minimum: 1)
+    #[serde(deserialize_with = "deserialize_events_per_notch")]
+    pub events_per_notch: Option<i32>,
+}
+
 fn deserialize_refresh_interval<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -52,6 +62,14 @@ where
 {
     let value = u64::deserialize(deserializer)?;
     Ok(value.max(10))
+}
+
+fn deserialize_events_per_notch<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<i32>::deserialize(deserializer)?;
+    Ok(value.map(|v| v.max(1)))
 }
 
 impl Config {
@@ -70,5 +88,22 @@ impl Config {
             .ok()
             .and_then(|content| toml::from_str(&content).ok())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn scroll_events_per_notch_defaults_to_none() {
+        let cfg = Config::default();
+        assert_eq!(cfg.scroll.events_per_notch, None);
+    }
+
+    #[test]
+    fn scroll_events_per_notch_is_clamped_to_one() {
+        let cfg: Config = toml::from_str("[scroll]\nevents_per_notch = 0").unwrap();
+        assert_eq!(cfg.scroll.events_per_notch, Some(1));
     }
 }

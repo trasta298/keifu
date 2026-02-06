@@ -41,3 +41,19 @@ auto_fetch = false
 ```
 
 You can still manually refresh with `R` and fetch with `f`.
+
+## Scroll normalization (optional)
+
+If your terminal emits multiple mouse scroll events for one physical wheel notch,
+you can normalize this in `config.toml`:
+
+```toml
+[scroll]
+# Number of mouse scroll events treated as one wheel notch (minimum: 1)
+events_per_notch = 6
+```
+
+- If omitted, keifu uses legacy behavior (coalesced burst => one move),
+  matching the `c7abeee` behavior.
+- `1`: no normalization (one event -> one move)
+- `2`, `3`, ...: N events are treated as one wheel notch
