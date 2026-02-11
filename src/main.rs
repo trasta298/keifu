@@ -1,5 +1,7 @@
 //! keifu: a TUI tool that shows Git commit graphs
 
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use clap::Parser;
 
@@ -10,6 +12,9 @@ use keifu::{
     keybindings::map_key_to_action,
     tui, ui,
 };
+
+/// ~60 fps cap
+const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Parser)]
 #[command(name = "keifu")]
@@ -36,28 +41,49 @@ fn main() -> Result<()> {
     // Initialize terminal
     let mut terminal = tui::init()?;
 
+    let mut last_draw = Instant::now() - MIN_FRAME_INTERVAL;
+    let mut needs_redraw = true;
+    let mut last_scroll_time: Option<Instant> = None;
+
     // Main loop
     loop {
-        // Render
-        terminal.draw(|frame| {
-            ui::draw(frame, &mut app);
-        })?;
+        // 1. Receive completed async diff results (lightweight)
+        app.poll_diff_results();
 
-        // Check if async fetch has completed
+        // 2. Check if async fetch has completed
         app.update_fetch_status();
 
-        // Auto-refresh check
+        // 3. Start diff computation if debounce elapsed
+        app.request_diff_if_needed();
+
+        // 4. Auto-refresh check
         app.check_auto_refresh();
 
-        // Exit check
+        // 5. Frame-rate limited rendering
+        if needs_redraw && last_draw.elapsed() >= MIN_FRAME_INTERVAL {
+            terminal.draw(|frame| {
+                ui::draw(frame, &mut app);
+            })?;
+            last_draw = Instant::now();
+            needs_redraw = false;
+        }
+
+        // 6. Exit check
         if app.should_quit {
             break;
         }
 
-        // Event handling - drain all pending events to prevent accumulation
-        let events = drain_events()?;
+        // 7. Calculate poll timeout
+        let poll_timeout = if needs_redraw {
+            MIN_FRAME_INTERVAL.saturating_sub(last_draw.elapsed())
+        } else {
+            Duration::from_millis(100)
+        };
 
-        // Process keyboard events
+        // 8. Event collection (bounded drain)
+        let events = drain_events(poll_timeout)?;
+
+        // 9. Process keyboard events
         for event in &events {
             if let Some(key) = get_key_event(event) {
                 if let Some(action) = map_key_to_action(key, &app.mode) {
@@ -68,17 +94,32 @@ fn main() -> Result<()> {
             }
         }
 
-        // Coalesce and process scroll events (Normal mode only)
+        // 10. Coalesce and process scroll events (Normal mode only)
         if matches!(app.mode, AppMode::Normal) {
             let scroll_delta = coalesce_scroll_events(&events);
-            let scroll_steps =
-                scroll_delta_to_steps(scroll_delta, scroll_events_per_notch, &mut scroll_remainder);
-            if scroll_steps != 0 {
-                if let Err(e) = app.handle_action(Action::ScrollMove(scroll_steps)) {
-                    app.show_error(format!("{e}"));
+            if scroll_delta != 0 {
+                let now = Instant::now();
+                let fast = last_scroll_time
+                    .is_some_and(|t| now.duration_since(t) < Duration::from_millis(50));
+                last_scroll_time = Some(now);
+
+                let scroll_steps = scroll_delta_to_steps(
+                    scroll_delta,
+                    scroll_events_per_notch,
+                    &mut scroll_remainder,
+                    fast,
+                );
+                if scroll_steps != 0 {
+                    if let Err(e) = app.handle_action(Action::ScrollMove(scroll_steps)) {
+                        app.show_error(format!("{e}"));
+                    }
                 }
             }
         }
+
+        // Every loop allows redraw (frame-rate limiter controls actual draw frequency).
+        // ratatui double-buffers, so no-change frames produce near-zero I/O.
+        needs_redraw = true;
     }
 
     // Restore terminal
