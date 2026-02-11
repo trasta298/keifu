@@ -5,6 +5,8 @@ pub enum Action {
     // Navigation
     MoveUp,
     MoveDown,
+    /// Scroll by N steps (negative = up, positive = down)
+    ScrollMove(i32),
     PageUp,
     PageDown,
     GoToTop,

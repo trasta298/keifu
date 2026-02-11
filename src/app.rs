@@ -2,7 +2,7 @@
 
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::widgets::ListState;
@@ -195,6 +195,9 @@ pub struct App {
     /// Whether to suppress error dialogs for fetch failures (for auto-fetch)
     fetch_silent: bool,
 
+    // Diff debounce
+    last_selection_change: Instant,
+
     // Auto-refresh state
     config: Config,
     last_refresh_time: Instant,
@@ -265,10 +268,16 @@ impl App {
             message_time: None,
             fetch_receiver: None,
             fetch_silent: false,
+            last_selection_change: now,
             config,
             last_refresh_time: now,
             last_fetch_time: now,
         })
+    }
+
+    /// Configured scroll normalization (events per wheel notch)
+    pub fn scroll_events_per_notch(&self) -> Option<i32> {
+        self.config.scroll.events_per_notch
     }
 
     /// Clear all diff caches
@@ -409,6 +418,7 @@ impl App {
             return;
         };
 
+        self.last_selection_change = Instant::now();
         self.selected_branch_position = Some(branch_idx);
         self.graph_list_state.select(Some(*node_idx));
     }
@@ -465,6 +475,7 @@ impl App {
             return;
         };
 
+        self.last_selection_change = Instant::now();
         self.selected_branch_position = Some(branch_pos_idx);
         self.graph_list_state.select(Some(*node_idx));
     }
@@ -583,8 +594,8 @@ impl App {
         self.search_state.fuzzy_matches.len()
     }
 
-    /// Update diff info for the selected commit (async)
-    pub fn update_diff_cache(&mut self) {
+    /// Receive completed diff results (lightweight, call every loop iteration)
+    pub fn poll_diff_results(&mut self) {
         // Pull in completed results for commit diff
         if let Some(ref receiver) = self.diff_receiver {
             if let Ok(result) = receiver.try_recv() {
@@ -603,8 +614,13 @@ impl App {
                 self.uncommitted_diff_receiver = None;
             }
         }
+    }
 
-        // Check if uncommitted node is selected
+    /// Debounce interval before spawning a new diff computation thread
+    const DIFF_DEBOUNCE: Duration = Duration::from_millis(50);
+
+    /// Start diff computation if needed (debounced, call every loop iteration)
+    pub fn request_diff_if_needed(&mut self) {
         let selected_node = self
             .graph_list_state
             .selected()
@@ -618,6 +634,11 @@ impl App {
         if node.is_uncommitted {
             // Do nothing if cache exists or already loading
             if self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_loading {
+                return;
+            }
+
+            // Debounce: wait before spawning thread
+            if self.last_selection_change.elapsed() < Self::DIFF_DEBOUNCE {
                 return;
             }
 
@@ -658,6 +679,11 @@ impl App {
             return;
         }
 
+        // Debounce: wait before spawning thread
+        if self.last_selection_change.elapsed() < Self::DIFF_DEBOUNCE {
+            return;
+        }
+
         // Compute diff in the background
         let (tx, rx) = mpsc::channel();
         let repo_path = self.repo_path.clone();
@@ -674,7 +700,9 @@ impl App {
         });
     }
 
-    /// Get cached diff info for the currently selected node
+    /// Get cached diff info for the currently selected node.
+    /// Returns None if the cache doesn't match the selected commit OID
+    /// (e.g. during debounce, showing "Loading..." instead of stale diff).
     pub fn cached_diff(&self) -> Option<&CommitDiffInfo> {
         let node = self
             .graph_list_state
@@ -684,11 +712,17 @@ impl App {
         if node.is_uncommitted {
             self.uncommitted_diff_cache.as_ref()
         } else {
-            self.diff_cache.as_ref()
+            let oid = node.commit.as_ref()?.oid;
+            if self.diff_cache_oid == Some(oid) {
+                self.diff_cache.as_ref()
+            } else {
+                None
+            }
         }
     }
 
-    /// Whether diff is currently loading for the selected node
+    /// Whether diff is currently loading for the selected node.
+    /// Also returns true during debounce wait (cache OID mismatch).
     pub fn is_diff_loading(&self) -> bool {
         let node = self
             .graph_list_state
@@ -697,7 +731,12 @@ impl App {
 
         match node {
             Some(n) if n.is_uncommitted => self.uncommitted_diff_loading,
-            _ => self.diff_loading_oid.is_some(),
+            Some(n) => {
+                let oid = n.commit.as_ref().map(|c| c.oid);
+                // Loading in progress, or cache doesn't match selection (debounce wait)
+                self.diff_loading_oid.is_some() || oid != self.diff_cache_oid
+            }
+            None => false,
         }
     }
 
@@ -728,6 +767,9 @@ impl App {
             }
             Action::MoveDown => {
                 self.move_selection(1);
+            }
+            Action::ScrollMove(steps) => {
+                self.move_selection(steps);
             }
             Action::PageUp => {
                 self.move_selection(-10);
@@ -975,16 +1017,21 @@ impl App {
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         let current = self.graph_list_state.selected().unwrap_or(0);
         let new = (current as i32 + delta).clamp(0, max as i32) as usize;
+        if new != current {
+            self.last_selection_change = Instant::now();
+        }
         self.graph_list_state.select(Some(new));
         self.sync_branch_selection_to_node(new);
     }
 
     fn select_first(&mut self) {
+        self.last_selection_change = Instant::now();
         self.graph_list_state.select(Some(0));
         self.sync_branch_selection_to_node(0);
     }
 
     fn select_last(&mut self) {
+        self.last_selection_change = Instant::now();
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         self.graph_list_state.select(Some(max));
         self.sync_branch_selection_to_node(max);
@@ -1015,6 +1062,7 @@ impl App {
             None => 0, // No branch selected, select the first one
         };
 
+        self.last_selection_change = Instant::now();
         self.selected_branch_position = Some(next);
         if let Some((node_idx, _)) = self.branch_positions.get(next) {
             self.graph_list_state.select(Some(*node_idx));
@@ -1038,6 +1086,7 @@ impl App {
             None => self.branch_positions.len() - 1, // No branch selected, select the last one
         };
 
+        self.last_selection_change = Instant::now();
         self.selected_branch_position = Some(prev);
         if let Some((node_idx, _)) = self.branch_positions.get(prev) {
             self.graph_list_state.select(Some(*node_idx));
