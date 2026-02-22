@@ -6,6 +6,7 @@ use clap::Parser;
 use keifu::{
     app::App,
     event::{get_key_event, poll_event},
+    git::configure_git_extensions,
     keybindings::map_key_to_action,
     tui, ui,
 };
@@ -26,6 +27,8 @@ fn main() -> Result<()> {
         let _ = tui::restore();
         original_hook(panic_info);
     }));
+
+    configure_git_extensions()?;
 
     // Initialize application
     let mut app = App::new()?;
