@@ -1,6 +1,6 @@
 //! Keybindings
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::action::Action;
 use crate::app::AppMode;
@@ -22,6 +22,10 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
 }
 
 fn map_normal_mode(key: KeyEvent) -> Option<Action> {
+    #[cfg(windows)]
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
     match (key.modifiers, key.code) {
         // Movement
         (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
