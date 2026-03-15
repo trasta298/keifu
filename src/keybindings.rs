@@ -1,11 +1,15 @@
 //! Keybindings
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::action::Action;
 use crate::app::AppMode;
 
 pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
+    #[cfg(windows)]
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
     match mode {
         AppMode::Normal => map_normal_mode(key),
         AppMode::Help => map_help_mode(key),
@@ -47,10 +51,8 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         (_, KeyCode::Char('@')) => Some(Action::JumpToHead),
 
         // Branch jump
-        (KeyModifiers::NONE, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => {
-            Some(Action::NextBranch)
-        }
-        (KeyModifiers::NONE, KeyCode::Char('[')) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+        (_, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => Some(Action::NextBranch),
+        (_, KeyCode::Char('[')) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
             Some(Action::PrevBranch)
         }
 
@@ -72,9 +74,9 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Action::Rebase),
 
         // UI
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Action::Search),
+        (_, KeyCode::Char('/')) => Some(Action::Search),
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => Some(Action::Refresh),
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Action::ToggleHelp),
+        (_, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             Some(Action::Quit)
         }
