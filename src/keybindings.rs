@@ -1,8 +1,8 @@
 //! Keybindings
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[cfg(windows)]
 use crossterm::event::KeyEventKind;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::action::Action;
 use crate::app::AppMode;
