@@ -3,8 +3,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
-#[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -97,11 +95,6 @@ impl CommitDiffInfo {
         let workdir = repo.workdir().unwrap_or_else(|| repo.path());
         let staged_result = Self::scan_diff(&staged_diff)?;
         let unstaged_result = Self::scan_diff(&unstaged_diff)?;
-        let tracked_paths: HashSet<PathBuf> = staged_result
-            .all_paths
-            .union(&unstaged_result.all_paths)
-            .cloned()
-            .collect();
         let refresh_paths: HashSet<PathBuf> = staged_result
             .all_paths
             .intersection(&unstaged_result.all_paths)
@@ -204,11 +197,7 @@ impl CommitDiffInfo {
                 continue;
             }
 
-            let Some(path) = entry.path() else {
-                continue;
-            };
-
-            let path_buf = PathBuf::from(path);
+            let path_buf = Self::path_from_bytes(entry.path_bytes());
             let full_path = workdir.join(&path_buf);
             if Self::is_plain_directory(&full_path) {
                 continue;
@@ -450,7 +439,7 @@ impl CommitDiffInfo {
         path: &Path,
         stats: (bool, usize, usize),
     ) -> Result<Option<(bool, usize, usize)>> {
-        let Some((old_is_binary, old_lines)) = Self::head_path_line_info(repo, head_tree, path)?
+        let Some((old_is_binary, _old_lines)) = Self::head_path_line_info(repo, head_tree, path)?
         else {
             return Ok(Some(stats));
         };
@@ -525,10 +514,8 @@ impl CommitDiffInfo {
         };
 
         let mut buf = Vec::new();
-        match file.read_to_end(&mut buf) {
-            Ok(_) => Ok(Self::count_text_lines(&buf)),
-            Err(_) => Ok(None),
-        }
+        file.read_to_end(&mut buf)?;
+        Ok(Self::count_text_lines(&buf))
     }
 
     fn count_text_lines(content: &[u8]) -> Option<usize> {
@@ -553,7 +540,10 @@ impl CommitDiffInfo {
         };
 
         #[cfg(unix)]
-        let bytes = target.as_os_str().as_bytes();
+        let bytes = {
+            use std::os::unix::ffi::OsStrExt;
+            target.as_os_str().as_bytes()
+        };
         #[cfg(not(unix))]
         let owned = target.to_string_lossy().into_owned().into_bytes();
         #[cfg(not(unix))]
@@ -572,6 +562,17 @@ impl CommitDiffInfo {
             line_count += 1;
         }
         line_count
+    }
+
+    #[cfg(unix)]
+    fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+
+    #[cfg(not(unix))]
+    fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
     }
 
     pub(crate) fn is_plain_directory(path: &Path) -> bool {
