@@ -243,7 +243,9 @@ impl App {
         let branches = repo.get_branches()?;
         let (working_tree_status, initial_message) = Self::working_tree_status_snapshot(&repo);
         let initial_message_time = initial_message.as_ref().map(|_| now);
-        let uncommitted_count = working_tree_status.as_ref().map(|s| s.accurate_file_count());
+        let uncommitted_count = working_tree_status
+            .as_ref()
+            .map(|s| s.accurate_file_count());
         let head_commit_oid = repo.head_oid();
         let graph_layout = build_graph(&commits, &branches, uncommitted_count, head_commit_oid);
 
@@ -416,7 +418,9 @@ impl App {
         if let Some(message) = status_message {
             self.set_message(message);
         }
-        let uncommitted_count = working_tree_status.as_ref().map(|s| s.accurate_file_count());
+        let uncommitted_count = working_tree_status
+            .as_ref()
+            .map(|s| s.accurate_file_count());
         self.working_tree_status = working_tree_status;
 
         self.commits = self.repo.get_commits(500)?;
@@ -1333,7 +1337,9 @@ mod tests {
         let branches = repo.get_branches().unwrap();
         let (working_tree_status, initial_message) = App::working_tree_status_snapshot(&repo);
         let initial_message_time = initial_message.as_ref().map(|_| now);
-        let uncommitted_count = working_tree_status.as_ref().map(|s| s.accurate_file_count());
+        let uncommitted_count = working_tree_status
+            .as_ref()
+            .map(|s| s.accurate_file_count());
         let head_commit_oid = repo.head_oid();
         let graph_layout = build_graph(&commits, &branches, uncommitted_count, head_commit_oid);
 

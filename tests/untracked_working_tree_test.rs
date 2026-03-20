@@ -437,11 +437,10 @@ fn from_working_tree_keeps_staged_change_reverted_in_worktree() {
     let diff = CommitDiffInfo::from_working_tree(&repo).unwrap();
 
     assert_eq!(diff.total_files, 1);
-    assert!(
-        diff.files
-            .iter()
-            .any(|f| f.path == Path::new("tracked.txt"))
-    );
+    assert!(diff
+        .files
+        .iter()
+        .any(|f| f.path == Path::new("tracked.txt")));
 }
 
 #[test]
