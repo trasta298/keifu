@@ -170,8 +170,13 @@ impl<'a> CommitDetailWidget<'a> {
                 Span::raw(path_str),
             ];
 
-            // Only show diff stats if there are actual changes (skip for binary files)
-            if file.insertions > 0 || file.deletions > 0 {
+            if file.is_binary {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    "(binary)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else if file.insertions > 0 || file.deletions > 0 {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     format!("+{}", file.insertions),

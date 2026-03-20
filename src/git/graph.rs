@@ -74,6 +74,22 @@ pub fn build_graph(
     head_commit_oid: Option<Oid>,
 ) -> GraphLayout {
     if commits.is_empty() {
+        if let Some(count) = uncommitted_count {
+            return GraphLayout {
+                nodes: vec![GraphNode {
+                    commit: None,
+                    lane: 0,
+                    color_index: UNCOMMITTED_COLOR_INDEX,
+                    branch_names: Vec::new(),
+                    is_head: false,
+                    is_uncommitted: true,
+                    uncommitted_count: count,
+                    cells: vec![CellType::Commit(UNCOMMITTED_COLOR_INDEX)],
+                }],
+                max_lane: 0,
+            };
+        }
+
         return GraphLayout {
             nodes: Vec::new(),
             max_lane: 0,

@@ -39,3 +39,6 @@ dirs = "5.0"
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[dev-dependencies]
+tempfile = "3.17"

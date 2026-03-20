@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use git2::Repository;
+use git2::{Repository, Status};
 
 use git2::Oid;
 
@@ -88,14 +88,20 @@ impl GitRepository {
             .map(|c| c.id())
     }
 
-    /// Get working tree status (staged + unstaged changes, excluding untracked files)
+    /// Get working tree status (staged + unstaged + untracked changes)
     /// Returns None if there are no changes
     pub fn get_working_tree_status(&self) -> Result<Option<WorkingTreeStatus>> {
+        if self.repo.is_bare() {
+            return Ok(None);
+        }
+
         let mut opts = git2::StatusOptions::new();
-        opts.include_untracked(false).include_ignored(false);
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
 
         let statuses = self.repo.statuses(Some(&mut opts))?;
-
+        let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
         let mut file_paths = Vec::new();
 
         for entry in statuses.iter() {
@@ -110,16 +116,26 @@ impl GitRepository {
                     | git2::Status::INDEX_TYPECHANGE,
             );
 
-            // Unstaged changes (WT_*)
-            let is_unstaged = status.intersects(
-                git2::Status::WT_MODIFIED
+            // Worktree changes: unstaged + untracked (WT_*)
+            let has_worktree_changes = status.intersects(
+                git2::Status::WT_NEW
+                    | git2::Status::WT_MODIFIED
                     | git2::Status::WT_DELETED
                     | git2::Status::WT_RENAMED
                     | git2::Status::WT_TYPECHANGE,
             );
 
-            if is_staged || is_unstaged {
+            if is_staged || has_worktree_changes {
                 if let Some(path) = entry.path() {
+                    if status.intersects(Status::WT_NEW) {
+                        let full_path = workdir.join(path);
+                        if matches!(
+                            std::fs::symlink_metadata(&full_path),
+                            Ok(meta) if meta.file_type().is_dir()
+                        ) {
+                            continue;
+                        }
+                    }
                     file_paths.push(path.to_string());
                 }
             }
@@ -132,12 +148,11 @@ impl GitRepository {
             let file_count = file_paths.len();
 
             // Compute mtime hash from all changed files
-            let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
             let mtime_hash: u128 = file_paths
                 .iter()
                 .filter_map(|path| {
                     let full_path = workdir.join(path);
-                    std::fs::metadata(&full_path)
+                    std::fs::symlink_metadata(&full_path)
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
