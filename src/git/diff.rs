@@ -323,33 +323,20 @@ impl CommitDiffInfo {
         refresh_paths: &HashSet<PathBuf>,
         worktree_refresh_paths: &HashSet<PathBuf>,
     ) -> Result<(usize, usize)> {
-        let mut merged_opts = DiffOptions::new();
-        merged_opts.ignore_submodules(true);
-        merged_opts.context_lines(0);
-        merged_opts.include_untracked(true);
-        merged_opts.recurse_untracked_dirs(true);
-        merged_opts.show_untracked_content(true);
-
-        let merged_diff =
-            repo.diff_tree_to_workdir_with_index(head_tree, Some(&mut merged_opts))?;
-        let merged_stats = merged_diff.stats()?;
-        let mut total_insertions = merged_stats.insertions();
-        let mut total_deletions = merged_stats.deletions();
-
-        let worktree_diff = if worktree_refresh_paths.is_empty() {
-            None
-        } else {
-            let mut worktree_opts = DiffOptions::new();
-            worktree_opts.ignore_submodules(true);
-            worktree_opts.context_lines(0);
-            worktree_opts.include_untracked(true);
-            worktree_opts.recurse_untracked_dirs(true);
-            worktree_opts.show_untracked_content(true);
-            Some(repo.diff_tree_to_workdir(head_tree, Some(&mut worktree_opts))?)
-        };
+        let mut worktree_opts = DiffOptions::new();
+        worktree_opts.ignore_submodules(true);
+        worktree_opts.context_lines(0);
+        worktree_opts.include_untracked(true);
+        worktree_opts.recurse_untracked_dirs(true);
+        worktree_opts.show_untracked_content(true);
+        let worktree_diff = repo.diff_tree_to_workdir(head_tree, Some(&mut worktree_opts))?;
+        let worktree_stats = worktree_diff.stats()?;
+        let mut total_insertions = worktree_stats.insertions();
+        let mut total_deletions = worktree_stats.deletions();
+        let mut dropped_paths = HashSet::new();
         for file in &mut scan.files {
             let use_worktree_diff = worktree_refresh_paths.contains(&file.path);
-            let merged_path_stats = Self::line_stats_for_path(&merged_diff, &file.path)?;
+            let worktree_path_stats = Self::line_stats_for_path(&worktree_diff, &file.path)?;
             let needs_refresh = use_worktree_diff
                 || scan.deferred_paths.contains(&file.path)
                 || refresh_paths.contains(&file.path)
@@ -358,32 +345,31 @@ impl CommitDiffInfo {
                 continue;
             }
 
-            let refreshed = Self::line_stats_for_path(
-                if use_worktree_diff {
-                    worktree_diff
-                        .as_ref()
-                        .expect("worktree diff should exist for refresh paths")
-                } else {
-                    &merged_diff
-                },
-                &file.path,
-            )?;
-            let Some((is_binary, insertions, deletions)) = (match refreshed {
-                Some(stats) if use_worktree_diff => Self::fallback_recreated_path_stats(
-                    repo, head_tree, workdir, &file.path, stats,
-                )?,
-                Some(stats) => Some(stats),
-                None => None,
-            }) else {
+            let Some((worktree_is_binary, worktree_insertions, worktree_deletions)) =
+                worktree_path_stats
+            else {
+                dropped_paths.insert(file.path.clone());
                 continue;
             };
-            let (merged_insertions, merged_deletions) = merged_path_stats
-                .map(|(_, insertions, deletions)| (insertions, deletions))
-                .unwrap_or((0, 0));
+            let (is_binary, insertions, deletions) = if use_worktree_diff {
+                match Self::line_stats_for_path(&worktree_diff, &file.path)? {
+                    Some(stats) => Self::fallback_recreated_path_stats(
+                        repo, head_tree, workdir, &file.path, stats,
+                    )?
+                    .unwrap_or((
+                        worktree_is_binary,
+                        worktree_insertions,
+                        worktree_deletions,
+                    )),
+                    None => (worktree_is_binary, worktree_insertions, worktree_deletions),
+                }
+            } else {
+                (worktree_is_binary, worktree_insertions, worktree_deletions)
+            };
 
-            if insertions != merged_insertions || deletions != merged_deletions {
-                total_insertions = total_insertions + insertions - merged_insertions;
-                total_deletions = total_deletions + deletions - merged_deletions;
+            if insertions != worktree_insertions || deletions != worktree_deletions {
+                total_insertions = total_insertions + insertions - worktree_insertions;
+                total_deletions = total_deletions + deletions - worktree_deletions;
             }
 
             if file.is_binary == is_binary
@@ -396,6 +382,13 @@ impl CommitDiffInfo {
             file.is_binary = is_binary;
             file.insertions = insertions;
             file.deletions = deletions;
+        }
+        if !dropped_paths.is_empty() {
+            scan.files
+                .retain(|file| !dropped_paths.contains(&file.path));
+            scan.all_paths.retain(|path| !dropped_paths.contains(path));
+            scan.deferred_paths
+                .retain(|path| !dropped_paths.contains(path));
         }
 
         Ok((total_insertions, total_deletions))

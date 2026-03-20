@@ -400,6 +400,46 @@ fn from_working_tree_staged_added_file_marked_binary_keeps_binary_classification
 }
 
 #[test]
+fn from_working_tree_drops_staged_add_removed_in_worktree() {
+    let (tempdir, repo) = init_repo();
+
+    fs::write(tempdir.path().join("new.txt"), "line1\n").unwrap();
+
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("new.txt")).unwrap();
+    index.write().unwrap();
+
+    fs::remove_file(tempdir.path().join("new.txt")).unwrap();
+
+    let diff = CommitDiffInfo::from_working_tree(&repo).unwrap();
+
+    assert_eq!(diff.total_files, 0);
+    assert_eq!(diff.total_insertions, 0);
+    assert_eq!(diff.total_deletions, 0);
+    assert!(diff.files.is_empty());
+}
+
+#[test]
+fn from_working_tree_drops_staged_change_reverted_in_worktree() {
+    let (tempdir, repo) = init_repo();
+
+    fs::write(tempdir.path().join("tracked.txt"), "staged change\n").unwrap();
+
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("tracked.txt")).unwrap();
+    index.write().unwrap();
+
+    fs::write(tempdir.path().join("tracked.txt"), "tracked\n").unwrap();
+
+    let diff = CommitDiffInfo::from_working_tree(&repo).unwrap();
+
+    assert_eq!(diff.total_files, 0);
+    assert_eq!(diff.total_insertions, 0);
+    assert_eq!(diff.total_deletions, 0);
+    assert!(diff.files.is_empty());
+}
+
+#[test]
 fn from_working_tree_deleted_then_recreated_shows_modified() {
     let (tempdir, repo) = init_repo();
 
