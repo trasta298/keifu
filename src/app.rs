@@ -95,6 +95,8 @@ enum DiffTarget {
     Uncommitted,
 }
 
+type UncommittedDiffResult = (Result<CommitDiffInfo, String>, Option<WorkingTreeStatus>);
+
 /// Delay before starting a diff load after selection changes.
 /// Prevents unnecessary computation during fast scrolling.
 const DIFF_LOAD_DEBOUNCE: Duration = Duration::from_millis(120);
@@ -194,8 +196,7 @@ pub struct App {
     uncommitted_diff_cache: Option<CommitDiffInfo>,
     uncommitted_diff_failed: bool,
     uncommitted_diff_loading: bool,
-    uncommitted_diff_receiver:
-        Option<Receiver<(Result<CommitDiffInfo, String>, Option<WorkingTreeStatus>)>>,
+    uncommitted_diff_receiver: Option<Receiver<UncommittedDiffResult>>,
     /// Cache key: working tree status at the time of caching (for invalidation)
     uncommitted_cache_key: Option<WorkingTreeStatus>,
     selected_diff_target: Option<DiffTarget>,
