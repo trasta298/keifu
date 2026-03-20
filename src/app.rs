@@ -194,7 +194,8 @@ pub struct App {
     uncommitted_diff_cache: Option<CommitDiffInfo>,
     uncommitted_diff_failed: bool,
     uncommitted_diff_loading: bool,
-    uncommitted_diff_receiver: Option<Receiver<Result<CommitDiffInfo, String>>>,
+    uncommitted_diff_receiver:
+        Option<Receiver<(Result<CommitDiffInfo, String>, Option<WorkingTreeStatus>)>>,
     /// Cache key: working tree status at the time of caching (for invalidation)
     uncommitted_cache_key: Option<WorkingTreeStatus>,
     selected_diff_target: Option<DiffTarget>,
@@ -729,7 +730,7 @@ impl App {
 
         // Pull in completed results for uncommitted diff
         if let Some(ref receiver) = self.uncommitted_diff_receiver {
-            if let Ok(result) = receiver.try_recv() {
+            if let Ok((result, status)) = receiver.try_recv() {
                 match result {
                     Ok(diff) => {
                         self.uncommitted_diff_cache = Some(diff);
@@ -741,6 +742,8 @@ impl App {
                         self.set_message(format!("Failed to load diff: {e}"));
                     }
                 }
+                // Use the status computed at diff time as the cache key
+                self.uncommitted_cache_key = status;
                 self.uncommitted_diff_loading = false;
                 self.uncommitted_diff_receiver = None;
             }
@@ -769,21 +772,25 @@ impl App {
                 let (tx, rx) = mpsc::channel();
                 let repo_path = self.repo_path.clone();
 
-                // Save current working tree status as cache key before starting computation
-                self.uncommitted_cache_key = self.working_tree_status.clone();
-
                 self.uncommitted_diff_failed = false;
                 self.uncommitted_diff_loading = true;
                 self.uncommitted_diff_receiver = Some(rx);
 
                 thread::spawn(move || {
-                    let result = git2::Repository::open(&repo_path)
-                        .map_err(|e| e.to_string())
-                        .and_then(|repo| {
-                            CommitDiffInfo::from_working_tree(&repo).map_err(|e| e.to_string())
-                        });
-
-                    let _ = tx.send(result);
+                    let repo = GitRepository {
+                        path: repo_path.clone(),
+                        repo: match git2::Repository::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let _ = tx.send((Err(e.to_string()), None));
+                                return;
+                            }
+                        },
+                    };
+                    let diff =
+                        CommitDiffInfo::from_working_tree(&repo.repo).map_err(|e| e.to_string());
+                    let status = repo.get_working_tree_status().ok().flatten();
+                    let _ = tx.send((diff, status));
                 });
             }
             DiffTarget::Commit(oid) => {
@@ -1523,8 +1530,8 @@ mod tests {
     fn failed_uncommitted_diff_load_is_cached_to_avoid_immediate_retry() {
         let mut app = make_uncommitted_app();
         let (tx, rx) = mpsc::channel();
-        tx.send(Err("boom".to_string())).unwrap();
-        app.uncommitted_cache_key = app.working_tree_status.clone();
+        let cache_key = app.working_tree_status.clone();
+        tx.send((Err("boom".to_string()), cache_key)).unwrap();
         app.uncommitted_diff_loading = true;
         app.uncommitted_diff_receiver = Some(rx);
 
