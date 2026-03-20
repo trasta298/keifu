@@ -107,7 +107,7 @@ impl CommitDiffInfo {
             .intersection(&unstaged_result.all_paths)
             .cloned()
             .collect();
-        let untracked_display_limit = MAX_FILES_TO_DISPLAY.saturating_sub(tracked_paths.len());
+        let untracked_display_limit = MAX_FILES_TO_DISPLAY;
         let untracked_result = Self::scan_untracked_worktree(repo, untracked_display_limit)?;
         let mut worktree_refresh_paths = HashSet::new();
         let mut scan = Self::merge_scans(
@@ -454,7 +454,7 @@ impl CommitDiffInfo {
 
         let fallback = match (old_is_binary, new_is_binary) {
             (true, false) => Some((false, new_lines, 0)),
-            (false, true) => Some((true, 0, old_lines)),
+            (false, true) => Some((true, 0, 0)),
             (true, true) => Some((true, 0, 0)),
             (false, false) => None,
         };

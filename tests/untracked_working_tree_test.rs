@@ -858,3 +858,74 @@ fn working_tree_status_includes_untracked_symlink_to_directory() {
     assert_eq!(status.file_count(), 1);
     assert_eq!(status.file_paths, vec!["linkdir".to_string()]);
 }
+
+#[test]
+fn from_working_tree_backfills_untracked_when_tracked_dropped() {
+    let (tempdir, repo) = init_repo();
+
+    // Stage additions that will be removed from the worktree → dropped by refresh
+    for i in 0..3 {
+        let name = format!("staged_{}.txt", i);
+        fs::write(tempdir.path().join(&name), format!("line {}\n", i)).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(&name)).unwrap();
+        index.write().unwrap();
+        fs::remove_file(tempdir.path().join(&name)).unwrap();
+    }
+
+    // Create untracked files that should fill the display
+    for i in 0..3 {
+        fs::write(
+            tempdir.path().join(format!("untracked_{}.txt", i)),
+            format!("content {}\n", i),
+        )
+        .unwrap();
+    }
+
+    let diff = CommitDiffInfo::from_working_tree(&repo).unwrap();
+
+    // The 3 staged-then-removed files should be dropped; only 3 untracked remain
+    assert_eq!(diff.total_files, 3);
+    assert_eq!(diff.files.len(), 3);
+    assert!(!diff.truncated);
+    for i in 0..3 {
+        let name = format!("untracked_{}.txt", i);
+        assert!(
+            diff.files.iter().any(|f| f.path == Path::new(&name)),
+            "untracked file {} should be in files list",
+            name
+        );
+    }
+}
+
+#[test]
+fn from_working_tree_deleted_text_then_recreated_binary_shows_zero_lines() {
+    let (tempdir, repo) = init_repo();
+
+    // tracked.txt already has "tracked\n" (1 line) from init_repo
+    let mut index = repo.index().unwrap();
+    index.remove(Path::new("tracked.txt"), 0).unwrap();
+    index.write().unwrap();
+
+    // Recreate as binary at the same path
+    fs::write(
+        tempdir.path().join("tracked.txt"),
+        b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
+    )
+    .unwrap();
+
+    let diff = CommitDiffInfo::from_working_tree(&repo).unwrap();
+    let file = diff
+        .files
+        .iter()
+        .find(|f| f.path == Path::new("tracked.txt"))
+        .expect("tracked.txt should appear in diff");
+
+    // Binary change → no line stats (consistent with git diff HEAD --numstat showing "- -")
+    assert_eq!(file.kind, FileChangeKind::Modified);
+    assert!(file.is_binary);
+    assert_eq!(file.insertions, 0);
+    assert_eq!(file.deletions, 0);
+    assert_eq!(diff.total_insertions, 0);
+    assert_eq!(diff.total_deletions, 0);
+}
