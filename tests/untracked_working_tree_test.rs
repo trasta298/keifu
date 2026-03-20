@@ -113,7 +113,7 @@ fn working_tree_status_detects_untracked_only() {
 
     assert!(status.is_some());
     let status = status.unwrap();
-    assert_eq!(status.file_count, 1);
+    assert_eq!(status.file_count(), 1);
     assert_eq!(status.file_paths, vec!["new_file.txt".to_string()]);
 }
 
@@ -230,7 +230,7 @@ fn working_tree_status_tracks_nested_untracked_file_changes() {
     let git_repo = GitRepository::open(tempdir.path()).unwrap();
     let initial_status = git_repo.get_working_tree_status().unwrap().unwrap();
 
-    assert_eq!(initial_status.file_count, 1);
+    assert_eq!(initial_status.file_count(), 1);
     assert_eq!(
         initial_status.file_paths,
         vec!["dir/sub/file.txt".to_string()]
@@ -241,7 +241,7 @@ fn working_tree_status_tracks_nested_untracked_file_changes() {
 
     let updated_status = git_repo.get_working_tree_status().unwrap().unwrap();
 
-    assert_eq!(updated_status.file_count, 1);
+    assert_eq!(updated_status.file_count(), 1);
     assert_eq!(
         updated_status.file_paths,
         vec!["dir/sub/file.txt".to_string()]
@@ -726,7 +726,7 @@ fn working_tree_status_includes_untracked_binary_files() {
 
     assert!(status.is_some());
     let status = status.unwrap();
-    assert_eq!(status.file_count, 1);
+    assert_eq!(status.file_count(), 1);
     assert_eq!(status.file_paths, vec!["image.png".to_string()]);
 }
 
@@ -774,6 +774,6 @@ fn working_tree_status_includes_untracked_symlink_to_directory() {
 
     assert!(status.is_some());
     let status = status.unwrap();
-    assert_eq!(status.file_count, 1);
+    assert_eq!(status.file_count(), 1);
     assert_eq!(status.file_paths, vec!["linkdir".to_string()]);
 }

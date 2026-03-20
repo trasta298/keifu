@@ -145,7 +145,6 @@ impl GitRepository {
             Ok(None)
         } else {
             file_paths.sort();
-            let file_count = file_paths.len();
 
             // Compute mtime hash from all changed files
             let mtime_hash: u128 = file_paths
@@ -161,7 +160,6 @@ impl GitRepository {
                 .sum();
 
             Ok(Some(WorkingTreeStatus {
-                file_count,
                 file_paths,
                 mtime_hash,
             }))
@@ -172,9 +170,14 @@ impl GitRepository {
 /// Working tree status
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkingTreeStatus {
-    pub file_count: usize,
     /// Sorted list of file paths with changes (used as cache key)
     pub file_paths: Vec<String>,
     /// Sum of file mtimes in milliseconds (used as cache key for content changes)
     pub mtime_hash: u128,
+}
+
+impl WorkingTreeStatus {
+    pub fn file_count(&self) -> usize {
+        self.file_paths.len()
+    }
 }
