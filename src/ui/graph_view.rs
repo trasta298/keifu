@@ -378,7 +378,10 @@ fn render_graph_line<'a>(
 
     // Handle uncommitted changes row
     if node.is_uncommitted {
-        let text = format!("uncommitted changes ({})", node.uncommitted_count);
+        let text = match node.uncommitted_count {
+            Some(count) => format!("uncommitted changes ({})", count),
+            None => "uncommitted changes".to_string(),
+        };
         let style = Style::default().fg(Color::White);
         spans.push(Span::styled(text, style));
         return Line::from(spans);

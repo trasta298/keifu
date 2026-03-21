@@ -1,14 +1,14 @@
 //! Repository operation wrapper
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use git2::Repository;
+use git2::{Repository, Status};
 
 use git2::Oid;
 
-use super::{BranchInfo, CommitInfo};
+use super::{BranchInfo, CommitDiffInfo, CommitInfo};
 
 pub struct GitRepository {
     pub repo: Repository,
@@ -16,6 +16,19 @@ pub struct GitRepository {
 }
 
 impl GitRepository {
+    /// Convert raw bytes from git2 into a PathBuf.
+    #[cfg(unix)]
+    fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+
+    /// Convert raw bytes from git2 into a PathBuf.
+    #[cfg(not(unix))]
+    fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+
     /// Discover a repository from the current directory
     pub fn discover() -> Result<Self> {
         let repo = Repository::discover(".")
@@ -88,15 +101,22 @@ impl GitRepository {
             .map(|c| c.id())
     }
 
-    /// Get working tree status (staged + unstaged changes, excluding untracked files)
+    /// Get working tree status (staged + unstaged + untracked changes)
     /// Returns None if there are no changes
     pub fn get_working_tree_status(&self) -> Result<Option<WorkingTreeStatus>> {
+        if self.repo.is_bare() {
+            return Ok(None);
+        }
+
         let mut opts = git2::StatusOptions::new();
-        opts.include_untracked(false).include_ignored(false);
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
 
         let statuses = self.repo.statuses(Some(&mut opts))?;
-
-        let mut file_paths = Vec::new();
+        let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
+        let mut file_paths: Vec<PathBuf> = Vec::new();
+        let mut has_collapsed_untracked_dirs = false;
 
         for entry in statuses.iter() {
             let status = entry.status();
@@ -110,18 +130,24 @@ impl GitRepository {
                     | git2::Status::INDEX_TYPECHANGE,
             );
 
-            // Unstaged changes (WT_*)
-            let is_unstaged = status.intersects(
-                git2::Status::WT_MODIFIED
+            // Worktree changes: unstaged + untracked (WT_*)
+            let has_worktree_changes = status.intersects(
+                git2::Status::WT_NEW
+                    | git2::Status::WT_MODIFIED
                     | git2::Status::WT_DELETED
                     | git2::Status::WT_RENAMED
                     | git2::Status::WT_TYPECHANGE,
             );
 
-            if is_staged || is_unstaged {
-                if let Some(path) = entry.path() {
-                    file_paths.push(path.to_string());
+            if is_staged || has_worktree_changes {
+                let path = Self::path_from_bytes(entry.path_bytes());
+                if status.intersects(Status::WT_NEW) {
+                    let full_path = workdir.join(&path);
+                    if CommitDiffInfo::is_plain_directory(&full_path) {
+                        has_collapsed_untracked_dirs = true;
+                    }
                 }
+                file_paths.push(path);
             }
         }
 
@@ -129,15 +155,13 @@ impl GitRepository {
             Ok(None)
         } else {
             file_paths.sort();
-            let file_count = file_paths.len();
 
             // Compute mtime hash from all changed files
-            let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
             let mtime_hash: u128 = file_paths
                 .iter()
                 .filter_map(|path| {
                     let full_path = workdir.join(path);
-                    std::fs::metadata(&full_path)
+                    std::fs::symlink_metadata(&full_path)
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
@@ -146,9 +170,9 @@ impl GitRepository {
                 .sum();
 
             Ok(Some(WorkingTreeStatus {
-                file_count,
                 file_paths,
                 mtime_hash,
+                has_collapsed_untracked_dirs,
             }))
         }
     }
@@ -157,9 +181,32 @@ impl GitRepository {
 /// Working tree status
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkingTreeStatus {
-    pub file_count: usize,
     /// Sorted list of file paths with changes (used as cache key)
-    pub file_paths: Vec<String>,
+    pub file_paths: Vec<PathBuf>,
     /// Sum of file mtimes in milliseconds (used as cache key for content changes)
     pub mtime_hash: u128,
+    /// True when untracked directories were collapsed to a single status entry.
+    /// In that case the mtime hash is not precise enough to safely reuse the
+    /// uncommitted diff cache across refreshes.
+    pub has_collapsed_untracked_dirs: bool,
+}
+
+impl WorkingTreeStatus {
+    pub fn file_count(&self) -> usize {
+        self.file_paths.len()
+    }
+
+    /// Returns the exact file count when accurate, or None when untracked
+    /// directories were collapsed and the true count is unknown.
+    pub fn accurate_file_count(&self) -> Option<usize> {
+        if self.has_collapsed_untracked_dirs {
+            None
+        } else {
+            Some(self.file_paths.len())
+        }
+    }
+
+    pub fn is_precise_cache_key(&self) -> bool {
+        !self.has_collapsed_untracked_dirs
+    }
 }

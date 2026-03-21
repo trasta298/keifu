@@ -22,8 +22,9 @@ pub struct GraphNode {
     pub is_head: bool,
     /// Whether this is an uncommitted changes node
     pub is_uncommitted: bool,
-    /// Number of uncommitted files (valid only when is_uncommitted is true)
-    pub uncommitted_count: usize,
+    /// Number of uncommitted files (None when count is inaccurate, e.g.
+    /// collapsed untracked directories).  Valid only when is_uncommitted is true.
+    pub uncommitted_count: Option<usize>,
     /// Render info for this row
     pub cells: Vec<CellType>,
 }
@@ -65,15 +66,33 @@ pub struct GraphLayout {
 }
 
 /// Build a graph from commit list
-/// uncommitted_count: Number of uncommitted files (None if no uncommitted changes)
+/// uncommitted_count: None if no uncommitted changes, Some(count) if there
+/// are uncommitted changes.  The inner Option is None when the exact file
+/// count is unavailable (e.g. collapsed untracked directories).
 /// head_commit_oid: The OID of the commit that HEAD points to (for uncommitted changes)
 pub fn build_graph(
     commits: &[CommitInfo],
     branches: &[BranchInfo],
-    uncommitted_count: Option<usize>,
+    uncommitted_count: Option<Option<usize>>,
     head_commit_oid: Option<Oid>,
 ) -> GraphLayout {
     if commits.is_empty() {
+        if let Some(count) = uncommitted_count {
+            return GraphLayout {
+                nodes: vec![GraphNode {
+                    commit: None,
+                    lane: 0,
+                    color_index: UNCOMMITTED_COLOR_INDEX,
+                    branch_names: Vec::new(),
+                    is_head: false,
+                    is_uncommitted: true,
+                    uncommitted_count: count,
+                    cells: vec![CellType::Commit(UNCOMMITTED_COLOR_INDEX)],
+                }],
+                max_lane: 0,
+            };
+        }
+
         return GraphLayout {
             nodes: Vec::new(),
             max_lane: 0,
@@ -210,7 +229,7 @@ pub fn build_graph(
                 branch_names: Vec::new(),
                 is_head: false,
                 is_uncommitted: false,
-                uncommitted_count: 0,
+                uncommitted_count: None,
                 cells: fork_connector_cells,
             });
 
@@ -379,7 +398,7 @@ pub fn build_graph(
             branch_names,
             is_head,
             is_uncommitted: false,
-            uncommitted_count: 0,
+            uncommitted_count: None,
             cells,
         });
 

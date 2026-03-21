@@ -33,13 +33,18 @@ impl<'a> CommitDetailWidget<'a> {
     }
 
     fn build_file_lines(app: &App) -> Vec<Line<'a>> {
+        // Prefer cached data (even if stale) over a loading indicator so that
+        // auto-refresh doesn't cause the file list to flicker.
+        if let Some(diff) = app.cached_diff() {
+            return Self::build_file_list_lines_from(Some(diff));
+        }
         if app.is_diff_loading() {
             return vec![Line::from(Span::styled(
                 "Loading...",
                 Style::default().fg(Color::DarkGray),
             ))];
         }
-        Self::build_file_list_lines_from(app.cached_diff())
+        Self::build_file_list_lines_from(None)
     }
 
     fn build_commit_lines(app: &App) -> Vec<Line<'a>> {
@@ -65,7 +70,10 @@ impl<'a> CommitDetailWidget<'a> {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    format!("{} files with changes", node.uncommitted_count),
+                    match node.uncommitted_count {
+                        Some(count) => format!("{} files with changes", count),
+                        None => "files with changes".to_string(),
+                    },
                     Style::default().fg(Color::DarkGray),
                 )),
             ];
@@ -170,8 +178,13 @@ impl<'a> CommitDetailWidget<'a> {
                 Span::raw(path_str),
             ];
 
-            // Only show diff stats if there are actual changes (skip for binary files)
-            if file.insertions > 0 || file.deletions > 0 {
+            if file.is_binary {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    "(binary)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else if file.insertions > 0 || file.deletions > 0 {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     format!("+{}", file.insertions),

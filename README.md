@@ -119,8 +119,8 @@ See [docs/configuration.md](docs/configuration.md) for configuration options.
 
 - The TUI loads up to 500 commits across all branches.
 - Merge commits are diffed against the first parent; the initial commit is diffed against an empty tree.
-- Changed files are capped at 50 and binary files are skipped.
-- If there are staged or unstaged changes (excluding untracked files), an "uncommitted changes" row appears at the top.
+- Changed files are capped at 50. Binary files are shown without line stats.
+- If there are staged, unstaged, or untracked changes, an "uncommitted changes" row appears at the top.
 - When multiple branches point to the same commit, the label is collapsed to a single name with a `+N` suffix (e.g., `main +2`). Use `h`/`l` or `←`/`→` to switch between them.
 - Checking out `origin/xxx` creates or updates a local branch. Upstream is set only when creating a new branch. If the local branch exists but points to a different commit, it is force-updated to match the remote.
 - Remote branches are displayed, but delete operations only work with local branches.
