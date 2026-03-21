@@ -714,7 +714,7 @@ impl FileDiffContent {
         opts.recurse_untracked_dirs(true);
         opts.show_untracked_content(true);
 
-        let diff = repo.diff_tree_to_workdir(head_tree.as_ref(), Some(&mut opts))?;
+        let diff = repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
 
         Self::from_diff(&diff, file_path)
     }
@@ -735,11 +735,13 @@ impl FileDiffContent {
             (FileChangeKind::Modified, false)
         };
 
-        if is_binary {
+        // No deltas: file may have been restored/changed externally while
+        // FileSelect was open. Return empty content instead of indexing OOB.
+        if diff.deltas().len() == 0 || is_binary {
             return Ok(Self {
                 path: file_path.to_path_buf(),
                 kind,
-                is_binary: true,
+                is_binary,
                 hunks: Vec::new(),
                 total_additions: 0,
                 total_deletions: 0,
