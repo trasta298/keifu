@@ -388,8 +388,7 @@ impl App {
                 // by can_reuse_uncommitted_cache() inside refresh(), which
                 // clears the key when the working tree changes.
                 let has_key = self.uncommitted_cache_key.is_some();
-                has_key
-                    && (self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_failed)
+                has_key && (self.uncommitted_diff_cache.is_some() || self.uncommitted_diff_failed)
             }
         }
     }
@@ -737,20 +736,29 @@ impl App {
     pub fn update_diff_cache(&mut self) {
         // Pull in completed results for commit diff
         if let Some(ref receiver) = self.diff_receiver {
-            if let Ok(result) = receiver.try_recv() {
-                match result.diff {
-                    Ok(diff) => {
-                        self.diff_cache = Some(diff);
-                        self.diff_cache_oid = Some(result.oid);
+            match receiver.try_recv() {
+                Ok(result) => {
+                    match result.diff {
+                        Ok(diff) => {
+                            self.diff_cache = Some(diff);
+                            self.diff_cache_oid = Some(result.oid);
+                        }
+                        Err(e) => {
+                            self.diff_cache = None;
+                            self.diff_cache_oid = Some(result.oid);
+                            self.set_message(format!("Failed to load diff: {e}"));
+                        }
                     }
-                    Err(e) => {
-                        self.diff_cache = None;
-                        self.diff_cache_oid = Some(result.oid);
-                        self.set_message(format!("Failed to load diff: {e}"));
-                    }
+                    self.diff_loading_oid = None;
+                    self.diff_receiver = None;
                 }
-                self.diff_loading_oid = None;
-                self.diff_receiver = None;
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread panicked or dropped sender — clear loading state
+                    self.diff_loading_oid = None;
+                    self.diff_receiver = None;
+                    self.set_message("Diff computation failed unexpectedly");
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
 
@@ -769,15 +777,17 @@ impl App {
                             self.set_message(format!("Failed to load diff: {e}"));
                         }
                     }
-                    // Use the status snapshot from the diff thread as the cache
-                    // key.  Do NOT overwrite self.working_tree_status here — a
-                    // refresh() may have already observed a newer state, and
-                    // overwriting it would make has_cached_diff_for_target()
-                    // accept a stale diff.  If status retrieval failed (None),
-                    // fall back to the last known working tree status so that
-                    // the cache key is always Some, preventing re-triggering.
-                    self.uncommitted_cache_key =
-                        status.or_else(|| self.working_tree_status.clone());
+                    // Set the cache key only when the thread's status snapshot
+                    // still matches the current working tree status.  If
+                    // refresh() has already observed a newer state, leave the
+                    // key as None so the next update_diff_cache() tick starts a
+                    // fresh computation.  The stale diff data is kept in
+                    // uncommitted_diff_cache for display to avoid flicker until
+                    // the new result arrives.
+                    let effective_status = status.or_else(|| self.working_tree_status.clone());
+                    if effective_status.as_ref() == self.working_tree_status.as_ref() {
+                        self.uncommitted_cache_key = effective_status;
+                    }
                     self.uncommitted_diff_loading = false;
                     self.uncommitted_diff_receiver = None;
                 }
@@ -836,13 +846,7 @@ impl App {
                     // If the working tree changes during computation, the key
                     // will no longer match the refresh-time status, correctly
                     // triggering a reload instead of caching a stale diff.
-                    let status = match repo.get_working_tree_status() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("Warning: working tree status failed in diff thread: {e}");
-                            None
-                        }
-                    };
+                    let status = repo.get_working_tree_status().unwrap_or_default();
                     let diff =
                         CommitDiffInfo::from_working_tree(&repo.repo).map_err(|e| e.to_string());
                     let _ = tx.send((diff, status));

@@ -341,6 +341,12 @@ impl CommitDiffInfo {
             let use_worktree_diff = worktree_refresh_paths.contains(&file.path);
             let worktree_path_stats =
                 Self::line_stats_from_index(&worktree_diff, &worktree_index, &file.path)?;
+            // NOTE: when .gitattributes is modified in the same uncommitted
+            // changes (e.g. switching a file from binary to text), file.is_binary
+            // still reflects the old attribute state.  This means a file that was
+            // binary will skip refresh here and keep showing +0/-0.  Fixing this
+            // would require comparing HEAD vs worktree .gitattributes per path,
+            // which libgit2 does not directly support.
             let needs_refresh = use_worktree_diff
                 || scan.deferred_paths.contains(&file.path)
                 || refresh_paths.contains(&file.path)
@@ -355,8 +361,7 @@ impl CommitDiffInfo {
                 // Path has no HEAD→workdir diff (e.g. MM/AD where workdir
                 // matches HEAD).  Use the staged (HEAD→index) stats instead
                 // of merge_scans totals to avoid double-counting.
-                let staged =
-                    Self::line_stats_from_index(staged_diff, &staged_index, &file.path)?;
+                let staged = Self::line_stats_from_index(staged_diff, &staged_index, &file.path)?;
                 let (is_binary, insertions, deletions) = staged.unwrap_or((false, 0, 0));
                 file.is_binary = is_binary;
                 file.insertions = insertions;
@@ -473,6 +478,12 @@ impl CommitDiffInfo {
         Ok(Some(fallback.unwrap_or(stats)))
     }
 
+    /// Check whether the path existed in HEAD and return (is_binary, line_count).
+    ///
+    /// Binary detection uses NUL-byte heuristics on blob content only — it does
+    /// NOT consult HEAD's `.gitattributes`.  If a file was marked binary via
+    /// attributes in HEAD and those attributes are removed in the same uncommitted
+    /// change, the old side may be misclassified as text (or vice-versa).
     fn head_path_line_info(
         repo: &Repository,
         head_tree: Option<&Tree<'_>>,
