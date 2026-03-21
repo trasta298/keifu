@@ -383,9 +383,10 @@ impl App {
         match target {
             DiffTarget::Commit(oid) => self.diff_cache_oid == Some(oid),
             DiffTarget::Uncommitted => {
-                (self.uncommitted_diff_cache.is_some() && self.uncommitted_cache_key.is_some())
-                    || (self.uncommitted_diff_failed
-                        && self.uncommitted_cache_key == self.working_tree_status)
+                let key_matches_status =
+                    self.uncommitted_cache_key == self.working_tree_status;
+                (self.uncommitted_diff_cache.is_some() && key_matches_status)
+                    || (self.uncommitted_diff_failed && key_matches_status)
             }
         }
     }
