@@ -781,6 +781,7 @@ impl App {
                     self.uncommitted_diff_receiver = None;
                     self.uncommitted_diff_failed = true;
                     self.uncommitted_cache_key = self.working_tree_status.clone();
+                    self.set_message("Diff computation failed unexpectedly");
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
@@ -829,7 +830,13 @@ impl App {
                     // If the working tree changes during computation, the key
                     // will no longer match the refresh-time status, correctly
                     // triggering a reload instead of caching a stale diff.
-                    let status = repo.get_working_tree_status().unwrap_or_default();
+                    let status = match repo.get_working_tree_status() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Warning: working tree status failed in diff thread: {e}");
+                            None
+                        }
+                    };
                     let diff =
                         CommitDiffInfo::from_working_tree(&repo.repo).map_err(|e| e.to_string());
                     let _ = tx.send((diff, status));
@@ -1592,7 +1599,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_invalidates_uncommitted_cache_key_for_collapsed_untracked_directories() {
+    fn refresh_reuses_uncommitted_cache_for_nested_untracked_directories() {
         let tempdir = tempfile::tempdir().unwrap();
         let repo = Repository::init(tempdir.path()).unwrap();
         let _oid = commit_file(&repo, "tracked.txt", "tracked\n", "initial");
@@ -1606,10 +1613,10 @@ mod tests {
 
         app.refresh(false).unwrap();
 
-        // Cache key is cleared to trigger a background reload, but the
-        // cached data is kept so the UI can keep showing it (no flicker).
+        // recurse_untracked_dirs lists individual files instead of collapsed
+        // directory entries, so the cache key is precise and can be reused.
         assert!(app.uncommitted_diff_cache.is_some());
-        assert!(app.uncommitted_cache_key.is_none());
+        assert!(app.uncommitted_cache_key.is_some());
     }
 
     #[test]
