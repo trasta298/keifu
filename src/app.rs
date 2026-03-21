@@ -323,10 +323,16 @@ impl App {
 
     /// Invalidate the uncommitted diff cache key to trigger a background reload,
     /// while keeping the cached data visible to avoid UI flicker.
+    ///
+    /// When a background computation is already in flight, keep the receiver
+    /// alive so the result can still be received.  Only the cache key is
+    /// cleared — once the thread completes the key will be set from the
+    /// thread's own status snapshot (see `update_diff_cache`).
     fn invalidate_uncommitted_diff_cache(&mut self) {
         self.uncommitted_diff_failed = false;
-        self.uncommitted_diff_loading = false;
-        self.uncommitted_diff_receiver = None;
+        if !self.uncommitted_diff_loading {
+            self.uncommitted_diff_receiver = None;
+        }
         self.uncommitted_cache_key = None;
     }
 
@@ -746,25 +752,36 @@ impl App {
 
         // Pull in completed results for uncommitted diff
         if let Some(ref receiver) = self.uncommitted_diff_receiver {
-            if let Ok((result, status)) = receiver.try_recv() {
-                match result {
-                    Ok(diff) => {
-                        self.uncommitted_diff_cache = Some(diff);
-                        self.uncommitted_diff_failed = false;
+            match receiver.try_recv() {
+                Ok((result, status)) => {
+                    match result {
+                        Ok(diff) => {
+                            self.uncommitted_diff_cache = Some(diff);
+                            self.uncommitted_diff_failed = false;
+                        }
+                        Err(e) => {
+                            self.uncommitted_diff_cache = None;
+                            self.uncommitted_diff_failed = true;
+                            self.set_message(format!("Failed to load diff: {e}"));
+                        }
                     }
-                    Err(e) => {
-                        self.uncommitted_diff_cache = None;
-                        self.uncommitted_diff_failed = true;
-                        self.set_message(format!("Failed to load diff: {e}"));
-                    }
+                    // Use the status computed at diff time as the cache key.
+                    // If status retrieval failed (None), fall back to the last known
+                    // working tree status to prevent re-triggering diff computation
+                    // on every tick.
+                    self.uncommitted_cache_key =
+                        status.or_else(|| self.working_tree_status.clone());
+                    self.uncommitted_diff_loading = false;
+                    self.uncommitted_diff_receiver = None;
                 }
-                // Use the status computed at diff time as the cache key.
-                // If status retrieval failed (None), fall back to the last known
-                // working tree status to prevent re-triggering diff computation
-                // on every tick.
-                self.uncommitted_cache_key = status.or_else(|| self.working_tree_status.clone());
-                self.uncommitted_diff_loading = false;
-                self.uncommitted_diff_receiver = None;
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread panicked or dropped sender — clear loading state
+                    self.uncommitted_diff_loading = false;
+                    self.uncommitted_diff_receiver = None;
+                    self.uncommitted_diff_failed = true;
+                    self.uncommitted_cache_key = self.working_tree_status.clone();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
 
