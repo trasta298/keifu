@@ -824,11 +824,14 @@ impl App {
                             }
                         },
                     };
+                    // Snapshot status BEFORE computing the diff so the cache
+                    // key represents the state the diff was computed against.
+                    // If the working tree changes during computation, the key
+                    // will no longer match the refresh-time status, correctly
+                    // triggering a reload instead of caching a stale diff.
+                    let status = repo.get_working_tree_status().unwrap_or_default();
                     let diff =
                         CommitDiffInfo::from_working_tree(&repo.repo).map_err(|e| e.to_string());
-                    // Errors are treated as None; the receiver falls back to the
-                    // last known working_tree_status to avoid a computation loop.
-                    let status = repo.get_working_tree_status().unwrap_or_default();
                     let _ = tx.send((diff, status));
                 });
             }
