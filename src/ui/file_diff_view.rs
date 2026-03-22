@@ -401,6 +401,12 @@ pub fn build_highlighted_lines(content: &FileDiffContent) -> (Vec<Line<'static>>
     let mut lines = Vec::new();
     let mut hunk_positions = Vec::new();
 
+    // Maintain highlight state across hunks so multi-line constructs
+    // (block comments, strings, etc.) that span hunk boundaries are
+    // colored correctly.
+    let mut old_hl = HighlightLines::new(syntax, theme);
+    let mut new_hl = HighlightLines::new(syntax, theme);
+
     for hunk in &content.hunks {
         // Blank line before each hunk header for readability
         lines.push(Line::from(""));
@@ -415,8 +421,6 @@ pub fn build_highlighted_lines(content: &FileDiffContent) -> (Vec<Line<'static>>
         )));
 
         let groups = group_diff_lines(&hunk.lines);
-        let mut old_hl = HighlightLines::new(syntax, theme);
-        let mut new_hl = HighlightLines::new(syntax, theme);
 
         for group in &groups {
             match group {
@@ -534,7 +538,9 @@ impl<'a> Widget for FileDiffViewWidget<'a> {
         // Pre-slice lines to avoid u16 overflow in Paragraph::scroll()
         // for diffs longer than 65535 lines.
         let visible_height = area.height.saturating_sub(2) as usize; // minus block borders
-        let start = self.scroll_offset;
+        let start = self.scroll_offset.min(
+            self.rendered_lines.len().saturating_sub(1),
+        );
         let end = (start + visible_height + 1).min(self.rendered_lines.len());
         let visible_lines = &self.rendered_lines[start..end];
 
