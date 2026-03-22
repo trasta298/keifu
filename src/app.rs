@@ -1115,7 +1115,10 @@ impl App {
 
                 if selected_index < file_list_snapshot.len() {
                     let path = file_list_snapshot[selected_index].path.clone();
-                    self.enter_file_diff(selected_index, file_list_snapshot, &path)?;
+                    if let Err(e) = self.enter_file_diff(selected_index, file_list_snapshot, &path)
+                    {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
                 }
             }
             Action::Cancel | Action::Quit => {
@@ -1217,7 +1220,9 @@ impl App {
                 if !file_list_snapshot.is_empty() {
                     let new_index = (file_index + 1) % file_list_snapshot.len();
                     let path = file_list_snapshot[new_index].path.clone();
-                    self.enter_file_diff(new_index, file_list_snapshot, &path)?;
+                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
                 }
             }
             Action::PrevFile => {
@@ -1233,7 +1238,9 @@ impl App {
                         file_index - 1
                     };
                     let path = file_list_snapshot[new_index].path.clone();
-                    self.enter_file_diff(new_index, file_list_snapshot, &path)?;
+                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
                 }
             }
             Action::Cancel | Action::Quit => {

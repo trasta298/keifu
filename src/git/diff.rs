@@ -695,7 +695,7 @@ impl FileDiffContent {
         Self::from_diff(&diff, file_path)
     }
 
-    /// Get full diff content for a single file in the working tree (HEAD → workdir)
+    /// Get full diff content for a single file in the working tree (HEAD+index → workdir)
     pub fn from_working_tree(repo: &Repository, file_path: &Path) -> Result<Self> {
         let head_tree = match repo.head() {
             Ok(head) => Some(head.peel_to_tree()?),

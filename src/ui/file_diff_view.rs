@@ -538,9 +538,9 @@ impl<'a> Widget for FileDiffViewWidget<'a> {
         // Pre-slice lines to avoid u16 overflow in Paragraph::scroll()
         // for diffs longer than 65535 lines.
         let visible_height = area.height.saturating_sub(2) as usize; // minus block borders
-        let start = self.scroll_offset.min(
-            self.rendered_lines.len().saturating_sub(1),
-        );
+        let start = self
+            .scroll_offset
+            .min(self.rendered_lines.len().saturating_sub(1));
         let end = (start + visible_height + 1).min(self.rendered_lines.len());
         let visible_lines = &self.rendered_lines[start..end];
 
