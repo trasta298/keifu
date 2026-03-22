@@ -1056,6 +1056,8 @@ impl App {
                             file_list,
                         };
                     }
+                } else {
+                    self.set_message("Loading diff...");
                 }
             }
             _ => {}
