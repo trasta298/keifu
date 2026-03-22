@@ -281,9 +281,11 @@ impl<'a> Widget for CommitDetailWidget<'a> {
         // File lines: 2 header lines (summary + blank) + file entries.
         // Scroll so the selected file is near the middle of the visible area.
         let visible_height = chunks[1].height.saturating_sub(2); // minus block borders
+        let total_lines = self.file_lines.len() as u16;
         let selected_line = self.file_scroll + 2; // offset for header lines
+        let max_scroll = total_lines.saturating_sub(visible_height);
         let scroll_y = if visible_height > 0 && selected_line >= visible_height {
-            selected_line - visible_height / 2
+            (selected_line - visible_height / 2).min(max_scroll)
         } else {
             0
         };
