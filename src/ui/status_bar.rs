@@ -161,6 +161,26 @@ impl<'a> Widget for StatusBar<'a> {
                     spans.push(Span::styled("close", desc_style));
                 }
             }
+            AppMode::FileSelect { .. } => {
+                spans.push(Span::styled(" j/k ", key_style));
+                spans.push(Span::styled("select ", desc_style));
+                spans.push(Span::styled(" Enter ", key_style));
+                spans.push(Span::styled("open diff ", desc_style));
+                spans.push(Span::styled(" Esc ", key_style));
+                spans.push(Span::styled("back", desc_style));
+            }
+            AppMode::FileDiff { .. } => {
+                spans.push(Span::styled(" n/N ", key_style));
+                spans.push(Span::styled("file ", desc_style));
+                spans.push(Span::styled(" ]/[ ", key_style));
+                spans.push(Span::styled("hunk ", desc_style));
+                spans.push(Span::styled(" j/k ", key_style));
+                spans.push(Span::styled("scroll ", desc_style));
+                spans.push(Span::styled(" h/l ", key_style));
+                spans.push(Span::styled("pan ", desc_style));
+                spans.push(Span::styled(" Esc ", key_style));
+                spans.push(Span::styled("back", desc_style));
+            }
         }
 
         let line = Line::from(spans);
@@ -173,6 +193,8 @@ impl<'a> Widget for StatusBar<'a> {
             AppMode::Input { .. } => Some(" INPUT "),
             AppMode::Confirm { .. } => Some(" CONFIRM "),
             AppMode::Error { .. } => Some(" ERROR "),
+            AppMode::FileSelect { .. } => Some(" FILE SELECT "),
+            AppMode::FileDiff { .. } => Some(" DIFF "),
         };
         if let Some(text) = mode_text {
             let mode_len = text.len() as u16;

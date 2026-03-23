@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use git2::{
-    AttrCheckFlags, AttrValue, Delta, Diff, DiffDelta, DiffOptions, ErrorCode, Oid, Patch,
-    Repository, Status, StatusOptions, Tree,
+    AttrCheckFlags, AttrValue, Delta, Diff, DiffDelta, DiffLineType, DiffOptions, ErrorCode, Oid,
+    Patch, Repository, Status, StatusOptions, Tree,
 };
 
 /// Maximum number of files to display
@@ -632,5 +632,183 @@ impl CommitDiffInfo {
         }?;
 
         Some((kind, path, delta.flags().is_binary()))
+    }
+}
+
+/// Diff line origin
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineOrigin {
+    Context,
+    Addition,
+    Deletion,
+    HunkHeader,
+    NoNewlineAtEof,
+}
+
+/// Single diff line
+#[derive(Debug, Clone)]
+pub struct DiffLineContent {
+    pub origin: DiffLineOrigin,
+    pub old_lineno: Option<u32>,
+    pub new_lineno: Option<u32>,
+    pub content: String,
+}
+
+/// A single hunk in a diff
+#[derive(Debug, Clone)]
+pub struct DiffHunkContent {
+    pub header: String,
+    pub lines: Vec<DiffLineContent>,
+}
+
+/// Full diff content for a single file
+#[derive(Debug, Clone)]
+pub struct FileDiffContent {
+    pub path: PathBuf,
+    pub kind: FileChangeKind,
+    pub is_binary: bool,
+    pub hunks: Vec<DiffHunkContent>,
+    pub total_additions: usize,
+    pub total_deletions: usize,
+}
+
+impl FileDiffContent {
+    /// Get full diff content for a single file in a commit
+    pub fn from_commit(repo: &Repository, commit_oid: Oid, file_path: &Path) -> Result<Self> {
+        let commit = repo.find_commit(commit_oid)?;
+        let new_tree = commit.tree()?;
+
+        let old_tree = if commit.parent_count() > 0 {
+            Some(commit.parent(0)?.tree()?)
+        } else {
+            None
+        };
+
+        let mut opts = DiffOptions::new();
+        opts.ignore_submodules(true);
+        opts.context_lines(3);
+        opts.pathspec(file_path);
+        opts.disable_pathspec_match(true);
+
+        let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), Some(&mut opts))?;
+
+        Self::from_diff(&diff, file_path)
+    }
+
+    /// Get full diff content for a single file in the working tree (HEAD+index → workdir)
+    pub fn from_working_tree(repo: &Repository, file_path: &Path) -> Result<Self> {
+        let head_tree = match repo.head() {
+            Ok(head) => Some(head.peel_to_tree()?),
+            Err(err)
+                if err.code() == ErrorCode::UnbornBranch || err.code() == ErrorCode::NotFound =>
+            {
+                None
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        let mut opts = DiffOptions::new();
+        opts.ignore_submodules(true);
+        opts.context_lines(3);
+        opts.pathspec(file_path);
+        opts.disable_pathspec_match(true);
+        opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
+        opts.show_untracked_content(true);
+
+        let diff = repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
+
+        Self::from_diff(&diff, file_path)
+    }
+
+    fn from_diff(diff: &Diff, file_path: &Path) -> Result<Self> {
+        // Determine file kind and binary status from the first delta
+        let (kind, is_binary) = if let Some(delta) = diff.deltas().next() {
+            let kind = match delta.status() {
+                Delta::Added | Delta::Untracked => FileChangeKind::Added,
+                Delta::Deleted => FileChangeKind::Deleted,
+                Delta::Modified | Delta::Typechange | Delta::Conflicted => FileChangeKind::Modified,
+                Delta::Renamed => FileChangeKind::Renamed,
+                Delta::Copied => FileChangeKind::Copied,
+                _ => FileChangeKind::Modified,
+            };
+            (kind, delta.flags().is_binary())
+        } else {
+            (FileChangeKind::Modified, false)
+        };
+
+        // No deltas: file may have been restored/changed externally while
+        // FileSelect was open. Return empty content instead of indexing OOB.
+        if diff.deltas().len() == 0 || is_binary {
+            return Ok(Self {
+                path: file_path.to_path_buf(),
+                kind,
+                is_binary,
+                hunks: Vec::new(),
+                total_additions: 0,
+                total_deletions: 0,
+            });
+        }
+
+        let Some(patch) = Patch::from_diff(diff, 0)? else {
+            return Ok(Self {
+                path: file_path.to_path_buf(),
+                kind,
+                is_binary: false,
+                hunks: Vec::new(),
+                total_additions: 0,
+                total_deletions: 0,
+            });
+        };
+
+        let (_, total_additions, total_deletions) = patch.line_stats()?;
+        let mut hunks = Vec::with_capacity(patch.num_hunks());
+
+        for hunk_idx in 0..patch.num_hunks() {
+            let (hunk, _) = patch.hunk(hunk_idx)?;
+            let header = String::from_utf8_lossy(hunk.header())
+                .trim_end()
+                .to_string();
+
+            let num_lines = patch.num_lines_in_hunk(hunk_idx)?;
+            let mut lines = Vec::with_capacity(num_lines);
+
+            for line_idx in 0..num_lines {
+                let line = patch.line_in_hunk(hunk_idx, line_idx)?;
+                let origin = match line.origin_value() {
+                    DiffLineType::Context => DiffLineOrigin::Context,
+                    DiffLineType::Addition => DiffLineOrigin::Addition,
+                    DiffLineType::Deletion => DiffLineOrigin::Deletion,
+                    DiffLineType::HunkHeader => DiffLineOrigin::HunkHeader,
+                    DiffLineType::ContextEOFNL
+                    | DiffLineType::AddEOFNL
+                    | DiffLineType::DeleteEOFNL => DiffLineOrigin::NoNewlineAtEof,
+                    _ => continue,
+                };
+
+                let content = String::from_utf8_lossy(line.content())
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r')
+                    .to_string();
+
+                lines.push(DiffLineContent {
+                    origin,
+                    old_lineno: line.old_lineno(),
+                    new_lineno: line.new_lineno(),
+                    content,
+                });
+            }
+
+            hunks.push(DiffHunkContent { header, lines });
+        }
+
+        Ok(Self {
+            path: file_path.to_path_buf(),
+            kind,
+            is_binary,
+            hunks,
+            total_additions,
+            total_deletions,
+        })
     }
 }

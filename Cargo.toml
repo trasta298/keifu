@@ -27,6 +27,12 @@ thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 unicode-width = "0.2"
 
+# Diff
+similar = { version = "2.7", features = ["inline"] }
+
+# Syntax highlighting
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+
 # Search
 fuzzy-matcher = "0.3"
 

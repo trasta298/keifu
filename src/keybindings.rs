@@ -24,6 +24,8 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
         }
         AppMode::Confirm { .. } => map_confirm_mode(key),
         AppMode::Error { .. } => map_error_mode(key),
+        AppMode::FileSelect { .. } => map_file_select_mode(key),
+        AppMode::FileDiff { .. } => map_file_diff_mode(key),
     }
 }
 
@@ -74,6 +76,9 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // TODO: merge and rebase will be implemented in the future
         // (KeyModifiers::NONE, KeyCode::Char('m')) => Some(Action::Merge),
         // (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Action::Rebase),
+
+        // File diff
+        (KeyModifiers::NONE, KeyCode::Char(' ')) => Some(Action::EnterFileSelect),
 
         // UI
         (_, KeyCode::Char('/')) => Some(Action::Search),
@@ -133,6 +138,70 @@ fn map_confirm_mode(key: KeyEvent) -> Option<Action> {
 fn map_error_mode(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Some(Action::Cancel),
+        _ => None,
+    }
+}
+
+fn map_file_select_mode(key: KeyEvent) -> Option<Action> {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
+            Some(Action::FileSelectDown)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
+            Some(Action::FileSelectUp)
+        }
+        (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::OpenFileDiff),
+        (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
+            Some(Action::Cancel)
+        }
+        _ => None,
+    }
+}
+
+fn map_file_diff_mode(key: KeyEvent) -> Option<Action> {
+    match (key.modifiers, key.code) {
+        // Line scroll
+        (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
+            Some(Action::ScrollDown)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
+            Some(Action::ScrollUp)
+        }
+        // Half-page scroll
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::ScrollPageDown),
+        (KeyModifiers::CONTROL, KeyCode::Char('u')) => Some(Action::ScrollPageUp),
+        // Full-page scroll
+        (KeyModifiers::CONTROL, KeyCode::Char('f')) | (KeyModifiers::NONE, KeyCode::PageDown) => {
+            Some(Action::PageDown)
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('b')) | (KeyModifiers::NONE, KeyCode::PageUp) => {
+            Some(Action::PageUp)
+        }
+        // Top/bottom
+        (KeyModifiers::NONE, KeyCode::Char('g')) | (KeyModifiers::NONE, KeyCode::Home) => {
+            Some(Action::ScrollToTop)
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('G')) | (KeyModifiers::NONE, KeyCode::End) => {
+            Some(Action::ScrollToBottom)
+        }
+        // Horizontal scroll
+        (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
+            Some(Action::ScrollLeft)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
+            Some(Action::ScrollRight)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('0')) => Some(Action::ScrollToLineStart),
+        // Hunk jump
+        (_, KeyCode::Char(']')) => Some(Action::NextHunk),
+        (_, KeyCode::Char('[')) => Some(Action::PrevHunk),
+        // File navigation
+        (KeyModifiers::NONE, KeyCode::Char('n')) => Some(Action::NextFile),
+        (KeyModifiers::SHIFT, KeyCode::Char('N')) => Some(Action::PrevFile),
+        // Exit
+        (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
+            Some(Action::Cancel)
+        }
         _ => None,
     }
 }

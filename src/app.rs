@@ -19,7 +19,8 @@ use crate::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
             fetch_origin, merge_branch, rebase_branch,
         },
-        BranchInfo, CommitDiffInfo, CommitInfo, GitRepository, WorkingTreeStatus,
+        BranchInfo, CommitDiffInfo, CommitInfo, FileDiffContent, FileDiffInfo, GitRepository,
+        WorkingTreeStatus,
     },
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
@@ -64,6 +65,21 @@ pub enum AppMode {
     },
     Error {
         message: String,
+    },
+    FileSelect {
+        selected_index: usize,
+        file_list: Vec<FileDiffInfo>,
+    },
+    FileDiff {
+        file_index: usize,
+        file_list: Vec<FileDiffInfo>,
+        content: FileDiffContent,
+        rendered_lines: Vec<ratatui::text::Line<'static>>,
+        hunk_positions: Vec<usize>,
+        scroll_offset: usize,
+        horizontal_offset: usize,
+        max_line_width: usize,
+        total_lines: usize,
     },
 }
 
@@ -204,6 +220,11 @@ pub struct App {
 
     // Flags
     pub should_quit: bool,
+    pending_refresh: bool,
+    /// Viewport height for diff scroll calculations (updated during render)
+    pub diff_viewport_height: u16,
+    /// Viewport width for diff horizontal scroll calculations (updated during render)
+    pub diff_viewport_width: u16,
 
     // Status message with auto-clear
     message: Option<String>,
@@ -293,6 +314,9 @@ impl App {
             selected_diff_target: None,
             selected_diff_target_changed_at: now,
             should_quit: false,
+            pending_refresh: false,
+            diff_viewport_height: 40,
+            diff_viewport_width: 80,
             message: initial_message,
             message_time: initial_message_time,
             fetch_receiver: None,
@@ -632,9 +656,17 @@ impl App {
         match fetch_result {
             Ok(()) => {
                 self.reset_timers();
-                match self.refresh(true) {
-                    Ok(()) => self.set_message("Fetched from origin"),
-                    Err(e) => self.show_error(format!("Refresh failed: {e}")),
+                if matches!(
+                    self.mode,
+                    AppMode::FileSelect { .. } | AppMode::FileDiff { .. }
+                ) {
+                    self.pending_refresh = true;
+                    self.set_message("Fetched from origin");
+                } else {
+                    match self.refresh(true) {
+                        Ok(()) => self.set_message("Fetched from origin"),
+                        Err(e) => self.show_error(format!("Refresh failed: {e}")),
+                    }
                 }
             }
             Err(e) if !silent => self.show_error(e),
@@ -650,6 +682,12 @@ impl App {
     /// Check and perform auto-refresh if interval has elapsed
     pub fn check_auto_refresh(&mut self) {
         if self.is_fetching() {
+            return;
+        }
+        if matches!(
+            self.mode,
+            AppMode::FileSelect { .. } | AppMode::FileDiff { .. }
+        ) {
             return;
         }
 
@@ -770,6 +808,7 @@ impl App {
                         Ok(diff) => {
                             self.uncommitted_diff_cache = Some(diff);
                             self.uncommitted_diff_failed = false;
+                            self.sync_file_list_with_uncommitted_diff();
                         }
                         Err(e) => {
                             self.uncommitted_diff_cache = None;
@@ -902,6 +941,8 @@ impl App {
             AppMode::Input { .. } => self.handle_input_action(action)?,
             AppMode::Confirm { .. } => self.handle_confirm_action(action)?,
             AppMode::Error { .. } => self.handle_error_action(action),
+            AppMode::FileSelect { .. } => self.handle_file_select_action(action)?,
+            AppMode::FileDiff { .. } => self.handle_file_diff_action(action)?,
         }
         Ok(())
     }
@@ -1010,6 +1051,23 @@ impl App {
                     }
                 }
             }
+            Action::EnterFileSelect => {
+                if let Some(diff) = self.cached_diff() {
+                    if diff.files.is_empty() {
+                        self.set_message("No changed files in this diff");
+                    } else {
+                        let file_list = diff.files.clone();
+                        self.mode = AppMode::FileSelect {
+                            selected_index: 0,
+                            file_list,
+                        };
+                    }
+                } else if self.is_diff_loading() {
+                    self.set_message("Loading diff...");
+                } else {
+                    self.set_message("Diff not available");
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -1025,6 +1083,324 @@ impl App {
         // Close the error on any key
         if matches!(action, Action::Quit | Action::Cancel | Action::Confirm) {
             self.mode = AppMode::Normal;
+        }
+    }
+
+    fn handle_file_select_action(&mut self, action: Action) -> Result<()> {
+        let AppMode::FileSelect {
+            selected_index,
+            file_list,
+        } = &self.mode
+        else {
+            return Ok(());
+        };
+        let selected_index = *selected_index;
+        let file_count = file_list.len();
+
+        match action {
+            Action::FileSelectUp => {
+                if selected_index > 0 {
+                    if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
+                        *selected_index -= 1;
+                    }
+                }
+            }
+            Action::FileSelectDown => {
+                if selected_index + 1 < file_count {
+                    if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
+                        *selected_index += 1;
+                    }
+                }
+            }
+            Action::OpenFileDiff => {
+                let file_list_snapshot = if let AppMode::FileSelect { file_list, .. } = &self.mode {
+                    file_list.clone()
+                } else {
+                    return Ok(());
+                };
+
+                if selected_index < file_list_snapshot.len() {
+                    let path = file_list_snapshot[selected_index].path.clone();
+                    if let Err(e) = self.enter_file_diff(selected_index, file_list_snapshot, &path)
+                    {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
+                }
+            }
+            Action::Cancel | Action::Quit => {
+                self.return_to_normal();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_file_diff_action(&mut self, action: Action) -> Result<()> {
+        let AppMode::FileDiff {
+            total_lines,
+            max_line_width,
+            file_index,
+            ..
+        } = &self.mode
+        else {
+            return Ok(());
+        };
+        let total_lines = *total_lines;
+        let max_line_width = *max_line_width;
+        let file_index = *file_index;
+        let viewport = self.diff_viewport_height as usize;
+        let half_page = (viewport / 2).max(1);
+        let max_scroll = total_lines.saturating_sub(viewport);
+        let h_viewport = self.diff_viewport_width as usize;
+        let max_horizontal = max_line_width.saturating_sub(h_viewport);
+        const H_SCROLL_STEP: usize = 4;
+
+        match action {
+            Action::ScrollDown => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = (*scroll_offset + 1).min(max_scroll);
+                }
+            }
+            Action::ScrollUp => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = scroll_offset.saturating_sub(1);
+                }
+            }
+            Action::ScrollPageDown => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = (*scroll_offset + half_page).min(max_scroll);
+                }
+            }
+            Action::ScrollPageUp => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = scroll_offset.saturating_sub(half_page);
+                }
+            }
+            Action::PageDown => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = (*scroll_offset + viewport).min(max_scroll);
+                }
+            }
+            Action::PageUp => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = scroll_offset.saturating_sub(viewport);
+                }
+            }
+            Action::ScrollToTop => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = 0;
+                }
+            }
+            Action::ScrollToBottom => {
+                if let AppMode::FileDiff { scroll_offset, .. } = &mut self.mode {
+                    *scroll_offset = max_scroll;
+                }
+            }
+            Action::ScrollRight => {
+                if let AppMode::FileDiff {
+                    horizontal_offset, ..
+                } = &mut self.mode
+                {
+                    *horizontal_offset = (*horizontal_offset + H_SCROLL_STEP).min(max_horizontal);
+                }
+            }
+            Action::ScrollLeft => {
+                if let AppMode::FileDiff {
+                    horizontal_offset, ..
+                } = &mut self.mode
+                {
+                    *horizontal_offset = horizontal_offset.saturating_sub(H_SCROLL_STEP);
+                }
+            }
+            Action::ScrollToLineStart => {
+                if let AppMode::FileDiff {
+                    horizontal_offset, ..
+                } = &mut self.mode
+                {
+                    *horizontal_offset = 0;
+                }
+            }
+            Action::NextHunk => {
+                if let AppMode::FileDiff {
+                    scroll_offset,
+                    hunk_positions,
+                    ..
+                } = &mut self.mode
+                {
+                    // Find next hunk after current scroll position
+                    if let Some(&pos) = hunk_positions.iter().find(|&&p| p > *scroll_offset) {
+                        *scroll_offset = pos.min(max_scroll);
+                    }
+                }
+            }
+            Action::PrevHunk => {
+                if let AppMode::FileDiff {
+                    scroll_offset,
+                    hunk_positions,
+                    ..
+                } = &mut self.mode
+                {
+                    // Find previous hunk before current scroll position
+                    if let Some(&pos) = hunk_positions.iter().rev().find(|&&p| p < *scroll_offset) {
+                        *scroll_offset = pos.min(max_scroll);
+                    }
+                }
+            }
+            Action::NextFile => {
+                let file_list_snapshot = if let AppMode::FileDiff { file_list, .. } = &self.mode {
+                    file_list.clone()
+                } else {
+                    return Ok(());
+                };
+                if !file_list_snapshot.is_empty() {
+                    let new_index = (file_index + 1) % file_list_snapshot.len();
+                    let path = file_list_snapshot[new_index].path.clone();
+                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
+                }
+            }
+            Action::PrevFile => {
+                let file_list_snapshot = if let AppMode::FileDiff { file_list, .. } = &self.mode {
+                    file_list.clone()
+                } else {
+                    return Ok(());
+                };
+                if !file_list_snapshot.is_empty() {
+                    let new_index = if file_index == 0 {
+                        file_list_snapshot.len() - 1
+                    } else {
+                        file_index - 1
+                    };
+                    let path = file_list_snapshot[new_index].path.clone();
+                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                        self.set_message(format!("Cannot open diff: {e}"));
+                    }
+                }
+            }
+            Action::Cancel | Action::Quit => {
+                // Return to FileSelect with file_index preserved
+                let (file_index, file_list) = if let AppMode::FileDiff {
+                    file_index,
+                    file_list,
+                    ..
+                } = &self.mode
+                {
+                    (*file_index, file_list.clone())
+                } else {
+                    return Ok(());
+                };
+                self.mode = AppMode::FileSelect {
+                    selected_index: file_index,
+                    file_list,
+                };
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn enter_file_diff(
+        &mut self,
+        file_index: usize,
+        file_list: Vec<FileDiffInfo>,
+        file_path: &std::path::Path,
+    ) -> Result<()> {
+        use crate::ui::file_diff_view::build_highlighted_lines;
+
+        // NOTE: Runs synchronously on the UI thread. For very large diffs (e.g. generated
+        // files, large refactors) this may briefly block input. If this becomes a problem,
+        // consider moving to a background task with a loading state, similar to commit diff summaries.
+        let content = self.load_file_diff_content(file_path)?;
+        let (rendered_lines, hunk_positions) = build_highlighted_lines(&content);
+        let total_lines = rendered_lines.len();
+        let max_line_width = rendered_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+
+        self.mode = AppMode::FileDiff {
+            file_index,
+            file_list,
+            content,
+            rendered_lines,
+            hunk_positions,
+            scroll_offset: 0,
+            horizontal_offset: 0,
+            max_line_width,
+            total_lines,
+        };
+        Ok(())
+    }
+
+    fn load_file_diff_content(&self, file_path: &std::path::Path) -> Result<FileDiffContent> {
+        match self.current_diff_target() {
+            Some(DiffTarget::Commit(oid)) => {
+                FileDiffContent::from_commit(&self.repo.repo, oid, file_path)
+            }
+            Some(DiffTarget::Uncommitted) | None => {
+                FileDiffContent::from_working_tree(&self.repo.repo, file_path)
+            }
+        }
+    }
+
+    /// Sync the file_list held by FileSelect / FileDiff with the latest
+    /// uncommitted diff cache.  Called right after `uncommitted_diff_cache` is
+    /// updated so that navigation and display stay consistent.
+    fn sync_file_list_with_uncommitted_diff(&mut self) {
+        if self.current_diff_target() != Some(DiffTarget::Uncommitted) {
+            return;
+        }
+
+        let new_files = match &self.uncommitted_diff_cache {
+            Some(diff) => diff.files.clone(),
+            None => return,
+        };
+
+        if new_files.is_empty() {
+            if matches!(
+                self.mode,
+                AppMode::FileSelect { .. } | AppMode::FileDiff { .. }
+            ) {
+                self.mode = AppMode::Normal;
+                self.set_message("No changed files in this diff");
+            }
+            return;
+        }
+
+        match &mut self.mode {
+            AppMode::FileSelect {
+                selected_index,
+                file_list,
+            } => {
+                *file_list = new_files;
+                if *selected_index >= file_list.len() {
+                    *selected_index = file_list.len() - 1;
+                }
+            }
+            AppMode::FileDiff {
+                file_index,
+                file_list,
+                ..
+            } => {
+                let current_path = file_list.get(*file_index).map(|f| f.path.clone());
+                *file_list = new_files;
+                if let Some(path) = current_path {
+                    if let Some(new_idx) = file_list.iter().position(|f| f.path == path) {
+                        *file_index = new_idx;
+                    } else if *file_index >= file_list.len() {
+                        *file_index = file_list.len() - 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn return_to_normal(&mut self) {
+        self.mode = AppMode::Normal;
+        if self.pending_refresh {
+            self.pending_refresh = false;
+            if let Err(e) = self.refresh(true) {
+                self.set_message(format!("Refresh failed: {e}"));
+            }
         }
     }
 
@@ -1436,6 +1812,9 @@ mod tests {
             selected_diff_target: None,
             selected_diff_target_changed_at: now,
             should_quit: false,
+            pending_refresh: false,
+            diff_viewport_height: 40,
+            diff_viewport_width: 80,
             message: initial_message,
             message_time: initial_message_time,
             fetch_receiver: None,
@@ -1498,6 +1877,9 @@ mod tests {
             selected_diff_target: Some(diff_target),
             selected_diff_target_changed_at: Instant::now() - DIFF_LOAD_DEBOUNCE,
             should_quit: false,
+            pending_refresh: false,
+            diff_viewport_height: 40,
+            diff_viewport_width: 80,
             message: None,
             message_time: None,
             fetch_receiver: None,

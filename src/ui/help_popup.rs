@@ -119,6 +119,12 @@ impl Widget for HelpPopup {
                 Span::styled("Cancel search", desc_style),
             ]),
             Line::from(""),
+            Line::from(Span::styled("Diff", header_style)),
+            Line::from(vec![
+                Span::styled("  Space      ", key_style),
+                Span::styled("View file diffs", desc_style),
+            ]),
+            Line::from(""),
             Line::from(Span::styled("Other", header_style)),
             Line::from(vec![
                 Span::styled("  R          ", key_style),

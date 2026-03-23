@@ -2,6 +2,7 @@
 
 pub mod commit_detail;
 pub mod dialog;
+pub mod file_diff_view;
 pub mod graph_view;
 pub mod help_popup;
 pub mod search_dropdown;
@@ -20,6 +21,7 @@ use crate::app::{App, AppMode, InputAction};
 use self::{
     commit_detail::CommitDetailWidget,
     dialog::{BranchInfoPopup, ConfirmDialog, InputDialog},
+    file_diff_view::FileDiffViewWidget,
     graph_view::GraphViewWidget,
     help_popup::HelpPopup,
     search_dropdown::{calculate_dropdown_height, SearchDropdown},
@@ -58,6 +60,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         );
         let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::Red));
         frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // FileDiff mode: full-screen diff view
+    if let AppMode::FileDiff {
+        content,
+        rendered_lines,
+        scroll_offset,
+        horizontal_offset,
+        file_index,
+        file_list,
+        ..
+    } = &app.mode
+    {
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+
+        // Update viewport dimensions for scroll calculations (minus borders)
+        app.diff_viewport_height = vertical[0].height.saturating_sub(2);
+        app.diff_viewport_width = vertical[0].width.saturating_sub(2);
+
+        frame.render_widget(
+            FileDiffViewWidget::new(
+                content,
+                rendered_lines,
+                *scroll_offset,
+                *horizontal_offset,
+                *file_index,
+                file_list.len(),
+            ),
+            vertical[0],
+        );
+        frame.render_widget(StatusBar::new(app), vertical[1]);
         return;
     }
 

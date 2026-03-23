@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
-use crate::app::App;
+use crate::app::{App, AppMode};
 use crate::git::{CommitDiffInfo, FileChangeKind};
 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
@@ -20,23 +20,34 @@ const VERTICAL_LAYOUT_THRESHOLD: u16 = 56;
 pub struct CommitDetailWidget<'a> {
     commit_lines: Vec<Line<'a>>,
     file_lines: Vec<Line<'a>>,
+    file_scroll: u16,
 }
 
 impl<'a> CommitDetailWidget<'a> {
     pub fn new(app: &App) -> Self {
         let commit_lines = Self::build_commit_lines(app);
         let file_lines = Self::build_file_lines(app);
+        let file_scroll = match &app.mode {
+            AppMode::FileSelect { selected_index, .. } => *selected_index as u16,
+            _ => 0,
+        };
         Self {
             commit_lines,
             file_lines,
+            file_scroll,
         }
     }
 
     fn build_file_lines(app: &App) -> Vec<Line<'a>> {
+        let selected_file_index = match &app.mode {
+            AppMode::FileSelect { selected_index, .. } => Some(*selected_index),
+            _ => None,
+        };
+
         // Prefer cached data (even if stale) over a loading indicator so that
         // auto-refresh doesn't cause the file list to flicker.
         if let Some(diff) = app.cached_diff() {
-            return Self::build_file_list_lines_from(Some(diff));
+            return Self::build_file_list_lines_from(Some(diff), selected_file_index);
         }
         if app.is_diff_loading() {
             return vec![Line::from(Span::styled(
@@ -44,7 +55,7 @@ impl<'a> CommitDetailWidget<'a> {
                 Style::default().fg(Color::DarkGray),
             ))];
         }
-        Self::build_file_list_lines_from(None)
+        Self::build_file_list_lines_from(None, None)
     }
 
     fn build_commit_lines(app: &App) -> Vec<Line<'a>> {
@@ -135,7 +146,10 @@ impl<'a> CommitDetailWidget<'a> {
         lines
     }
 
-    fn build_file_list_lines_from(diff: Option<&CommitDiffInfo>) -> Vec<Line<'a>> {
+    fn build_file_list_lines_from(
+        diff: Option<&CommitDiffInfo>,
+        selected_file_index: Option<usize>,
+    ) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
         let Some(diff) = diff else {
@@ -162,7 +176,9 @@ impl<'a> CommitDetailWidget<'a> {
         lines.push(Line::from(""));
 
         // File list
-        for file in &diff.files {
+        for (idx, file) in diff.files.iter().enumerate() {
+            let is_selected = selected_file_index == Some(idx);
+
             let (indicator, color) = match file.kind {
                 FileChangeKind::Added => ("A", Color::Green),
                 FileChangeKind::Modified => ("M", Color::Yellow),
@@ -197,7 +213,15 @@ impl<'a> CommitDetailWidget<'a> {
                 ));
             }
 
-            lines.push(Line::from(spans));
+            let mut line = Line::from(spans);
+            if is_selected {
+                line = line.style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            lines.push(line);
         }
 
         // Truncation message
@@ -253,9 +277,23 @@ impl<'a> Widget for CommitDetailWidget<'a> {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray));
 
+        // Scroll file list so selected file stays visible.
+        // File lines: 2 header lines (summary + blank) + file entries.
+        // Scroll so the selected file is near the middle of the visible area.
+        let visible_height = chunks[1].height.saturating_sub(2); // minus block borders
+        let total_lines = self.file_lines.len() as u16;
+        let selected_line = self.file_scroll + 2; // offset for header lines
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll_y = if visible_height > 0 && selected_line >= visible_height {
+            (selected_line - visible_height / 2).min(max_scroll)
+        } else {
+            0
+        };
+
         let right_paragraph = Paragraph::new(self.file_lines)
             .block(right_block)
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0));
 
         Widget::render(right_paragraph, chunks[1], buf);
     }
