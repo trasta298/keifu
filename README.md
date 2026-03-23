@@ -22,6 +22,7 @@ keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit grap
 - Unicode commit graph with per-branch colors
 - Commit list with branch labels, date, author, short hash, and message (some fields may be hidden on narrow terminals)
 - Commit detail panel with full message and changed file stats (+/-)
+- File diff view with syntax highlighting and word-level change emphasis
 - Git operations: checkout, create/delete branch, fetch
 - Branch search with dropdown UI
 
@@ -87,6 +88,7 @@ See [docs/configuration.md](docs/configuration.md) for configuration options.
 | `g` / `Home` | Go to top |
 | `G` / `End` | Go to bottom |
 | `@` | Jump to HEAD (current branch) |
+| `Space` | Open file diff view |
 
 ### Git operations
 
@@ -106,6 +108,20 @@ See [docs/configuration.md](docs/configuration.md) for configuration options.
 | `↓` / `Ctrl+j` | Select next result |
 | `Enter` | Jump to selected branch |
 | `Esc` / `Backspace` on empty | Cancel search |
+
+### File diff view
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` / `↑` / `↓` | Scroll up/down |
+| `h` / `l` / `←` / `→` | Scroll left/right |
+| `Ctrl+d` / `Ctrl+u` | Half-page down/up |
+| `Ctrl+f` / `Ctrl+b` | Full page down/up |
+| `g` / `G` | Go to top/bottom |
+| `0` | Scroll to line start |
+| `]` / `[` | Jump to next/previous hunk |
+| `n` / `N` | Jump to next/previous file |
+| `Esc` / `q` | Back to file select / close |
 
 ### Other
 
