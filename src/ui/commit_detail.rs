@@ -2,60 +2,48 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, FocusedPane};
 use crate::git::{CommitDiffInfo, FileChangeKind};
 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
 
-/// Width threshold for switching to vertical layout
-/// When panel width would be <= 28 chars, use vertical layout
-const VERTICAL_LAYOUT_THRESHOLD: u16 = 56;
-
+/// Commit info pane (left/top half of the detail area)
 pub struct CommitDetailWidget<'a> {
     commit_lines: Vec<Line<'a>>,
-    file_lines: Vec<Line<'a>>,
-    file_scroll: u16,
+    scroll: u16,
+    focused: bool,
 }
 
 impl<'a> CommitDetailWidget<'a> {
     pub fn new(app: &App) -> Self {
-        let commit_lines = Self::build_commit_lines(app);
-        let file_lines = Self::build_file_lines(app);
-        let file_scroll = match &app.mode {
-            AppMode::FileSelect { selected_index, .. } => *selected_index as u16,
-            _ => 0,
-        };
         Self {
-            commit_lines,
-            file_lines,
-            file_scroll,
+            commit_lines: Self::build_commit_lines(app),
+            scroll: app.detail_scroll,
+            focused: matches!(app.mode, AppMode::Normal)
+                && app.focused_pane == FocusedPane::Detail,
         }
     }
 
-    fn build_file_lines(app: &App) -> Vec<Line<'a>> {
-        let selected_file_index = match &app.mode {
-            AppMode::FileSelect { selected_index, .. } => Some(*selected_index),
-            _ => None,
-        };
+    pub fn with_scroll(mut self, scroll: u16) -> Self {
+        self.scroll = scroll;
+        self
+    }
 
-        // Prefer cached data (even if stale) over a loading indicator so that
-        // auto-refresh doesn't cause the file list to flicker.
-        if let Some(diff) = app.cached_diff() {
-            return Self::build_file_list_lines_from(Some(diff), selected_file_index);
-        }
-        if app.is_diff_loading() {
-            return vec![Line::from(Span::styled(
-                "Loading...",
-                Style::default().fg(Color::DarkGray),
-            ))];
-        }
-        Self::build_file_list_lines_from(None, None)
+    /// Estimate the rendered height (in rows) for the given inner width,
+    /// accounting for word wrap. Used to clamp the scroll offset.
+    pub fn estimated_height(&self, inner_width: u16) -> u16 {
+        let width = inner_width.max(1) as usize;
+        self.commit_lines
+            .iter()
+            .map(|line| line.width().max(1).div_ceil(width))
+            .sum::<usize>()
+            .min(u16::MAX as usize) as u16
     }
 
     fn build_commit_lines(app: &App) -> Vec<Line<'a>> {
@@ -144,6 +132,72 @@ impl<'a> CommitDetailWidget<'a> {
         }
 
         lines
+    }
+}
+
+impl<'a> Widget for CommitDetailWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width < MIN_WIDGET_WIDTH || area.height < MIN_WIDGET_HEIGHT {
+            render_placeholder_block(area, buf);
+            return;
+        }
+
+        let block = Block::default()
+            .title(" Commit Detail ")
+            .borders(Borders::ALL)
+            .border_style(super::pane_border_style(self.focused));
+
+        let max_scroll = self
+            .estimated_height(area.width.saturating_sub(2))
+            .saturating_sub(area.height.saturating_sub(2));
+
+        let paragraph = Paragraph::new(self.commit_lines)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll.min(max_scroll), 0));
+
+        Widget::render(paragraph, area, buf);
+    }
+}
+
+/// Changed files pane (right/bottom half of the detail area)
+pub struct FileListWidget<'a> {
+    file_lines: Vec<Line<'a>>,
+    file_scroll: u16,
+    focused: bool,
+}
+
+impl<'a> FileListWidget<'a> {
+    pub fn new(app: &App) -> Self {
+        let file_scroll = match &app.mode {
+            AppMode::FileSelect { selected_index, .. } => *selected_index as u16,
+            _ => 0,
+        };
+        Self {
+            file_lines: Self::build_file_lines(app),
+            file_scroll,
+            focused: matches!(app.mode, AppMode::FileSelect { .. }),
+        }
+    }
+
+    fn build_file_lines(app: &App) -> Vec<Line<'a>> {
+        let selected_file_index = match &app.mode {
+            AppMode::FileSelect { selected_index, .. } => Some(*selected_index),
+            _ => None,
+        };
+
+        // Prefer cached data (even if stale) over a loading indicator so that
+        // auto-refresh doesn't cause the file list to flicker.
+        if let Some(diff) = app.cached_diff() {
+            return Self::build_file_list_lines_from(Some(diff), selected_file_index);
+        }
+        if app.is_diff_loading() {
+            return vec![Line::from(Span::styled(
+                "Loading...",
+                Style::default().fg(Color::DarkGray),
+            ))];
+        }
+        Self::build_file_list_lines_from(None, None)
     }
 
     fn build_file_list_lines_from(
@@ -238,63 +292,41 @@ impl<'a> CommitDetailWidget<'a> {
 
         lines
     }
+
+    /// Scroll offset of the file list so the selected file stays visible.
+    /// File lines: 2 header lines (summary + blank) + file entries.
+    pub fn scroll_offset(&self, area: Rect) -> u16 {
+        let visible_height = area.height.saturating_sub(2); // minus block borders
+        let total_lines = self.file_lines.len() as u16;
+        let selected_line = self.file_scroll + 2; // offset for header lines
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        if visible_height > 0 && selected_line >= visible_height {
+            (selected_line - visible_height / 2).min(max_scroll)
+        } else {
+            0
+        }
+    }
 }
 
-impl<'a> Widget for CommitDetailWidget<'a> {
+impl<'a> Widget for FileListWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < MIN_WIDGET_WIDTH || area.height < MIN_WIDGET_HEIGHT {
             render_placeholder_block(area, buf);
             return;
         }
 
-        // Use vertical layout when each panel would be <= 28 chars wide
-        let direction = if area.width <= VERTICAL_LAYOUT_THRESHOLD {
-            Direction::Vertical
-        } else {
-            Direction::Horizontal
-        };
-
-        let chunks = Layout::default()
-            .direction(direction)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(area);
-
-        // Left: commit info
-        let left_block = Block::default()
-            .title(" Commit Detail ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
-
-        let left_paragraph = Paragraph::new(self.commit_lines)
-            .block(left_block)
-            .wrap(Wrap { trim: false });
-
-        Widget::render(left_paragraph, chunks[0], buf);
-
-        // Right: file list
-        let right_block = Block::default()
+        let block = Block::default()
             .title(" Changed Files ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(super::pane_border_style(self.focused));
 
-        // Scroll file list so selected file stays visible.
-        // File lines: 2 header lines (summary + blank) + file entries.
-        // Scroll so the selected file is near the middle of the visible area.
-        let visible_height = chunks[1].height.saturating_sub(2); // minus block borders
-        let total_lines = self.file_lines.len() as u16;
-        let selected_line = self.file_scroll + 2; // offset for header lines
-        let max_scroll = total_lines.saturating_sub(visible_height);
-        let scroll_y = if visible_height > 0 && selected_line >= visible_height {
-            (selected_line - visible_height / 2).min(max_scroll)
-        } else {
-            0
-        };
+        let scroll_y = self.scroll_offset(area);
 
-        let right_paragraph = Paragraph::new(self.file_lines)
-            .block(right_block)
+        let paragraph = Paragraph::new(self.file_lines)
+            .block(block)
             .wrap(Wrap { trim: false })
             .scroll((scroll_y, 0));
 
-        Widget::render(right_paragraph, chunks[1], buf);
+        Widget::render(paragraph, area, buf);
     }
 }

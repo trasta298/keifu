@@ -90,6 +90,14 @@ pub enum InputAction {
     Search,
 }
 
+/// Focusable panes in Normal mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusedPane {
+    #[default]
+    Graph,
+    Detail,
+}
+
 /// Confirmation action kinds
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
@@ -189,6 +197,13 @@ pub struct App {
 
     // UI state
     pub graph_list_state: ListState,
+    pub focused_pane: FocusedPane,
+    /// Scroll offset of the commit detail pane (issue #27)
+    pub detail_scroll: u16,
+    /// Total line count of the commit detail content (updated during render)
+    pub detail_content_height: u16,
+    /// Visible height of the commit detail pane (updated during render)
+    pub detail_viewport_height: u16,
 
     // Branch selection state
     /// List of (node_index, branch_name) for all branches
@@ -298,6 +313,10 @@ impl App {
             branches,
             graph_layout,
             graph_list_state,
+            focused_pane: FocusedPane::default(),
+            detail_scroll: 0,
+            detail_content_height: 0,
+            detail_viewport_height: 0,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -399,6 +418,7 @@ impl App {
         if self.selected_diff_target != target {
             self.selected_diff_target = target;
             self.selected_diff_target_changed_at = Instant::now();
+            self.detail_scroll = 0;
         }
         target
     }
@@ -963,26 +983,43 @@ impl App {
     fn handle_normal_action(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Quit => {
-                self.should_quit = true;
+                // Esc/q closes detail focus first, like closing a sub-view
+                if self.focused_pane == FocusedPane::Detail {
+                    self.focused_pane = FocusedPane::Graph;
+                } else {
+                    self.should_quit = true;
+                }
             }
-            Action::MoveUp => {
-                self.move_selection(-1);
+            Action::FocusNext => {
+                self.focused_pane = match self.focused_pane {
+                    FocusedPane::Graph => FocusedPane::Detail,
+                    FocusedPane::Detail => FocusedPane::Graph,
+                };
             }
-            Action::MoveDown => {
-                self.move_selection(1);
-            }
-            Action::PageUp => {
-                self.move_selection(-10);
-            }
-            Action::PageDown => {
-                self.move_selection(10);
-            }
-            Action::GoToTop => {
-                self.select_first();
-            }
-            Action::GoToBottom => {
-                self.select_last();
-            }
+            Action::MoveUp => match self.focused_pane {
+                FocusedPane::Graph => self.move_selection(-1),
+                FocusedPane::Detail => self.scroll_detail(-1),
+            },
+            Action::MoveDown => match self.focused_pane {
+                FocusedPane::Graph => self.move_selection(1),
+                FocusedPane::Detail => self.scroll_detail(1),
+            },
+            Action::PageUp => match self.focused_pane {
+                FocusedPane::Graph => self.move_selection(-10),
+                FocusedPane::Detail => self.scroll_detail(-self.detail_half_page()),
+            },
+            Action::PageDown => match self.focused_pane {
+                FocusedPane::Graph => self.move_selection(10),
+                FocusedPane::Detail => self.scroll_detail(self.detail_half_page()),
+            },
+            Action::GoToTop => match self.focused_pane {
+                FocusedPane::Graph => self.select_first(),
+                FocusedPane::Detail => self.detail_scroll = 0,
+            },
+            Action::GoToBottom => match self.focused_pane {
+                FocusedPane::Graph => self.select_last(),
+                FocusedPane::Detail => self.detail_scroll = self.max_detail_scroll(),
+            },
             Action::JumpToHead => {
                 self.jump_to_head();
             }
@@ -1548,6 +1585,21 @@ impl App {
         Ok(())
     }
 
+    /// Scroll the commit detail pane by delta, clamped to content (issue #27)
+    pub fn scroll_detail(&mut self, delta: i32) {
+        let max = self.max_detail_scroll();
+        self.detail_scroll = (self.detail_scroll as i32 + delta).clamp(0, max as i32) as u16;
+    }
+
+    fn max_detail_scroll(&self) -> u16 {
+        self.detail_content_height
+            .saturating_sub(self.detail_viewport_height)
+    }
+
+    fn detail_half_page(&self) -> i32 {
+        (self.detail_viewport_height / 2).max(1) as i32
+    }
+
     fn move_selection(&mut self, delta: i32) {
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         let current = self.graph_list_state.selected().unwrap_or(0);
@@ -1804,6 +1856,10 @@ mod tests {
             branches,
             graph_layout,
             graph_list_state,
+            focused_pane: FocusedPane::default(),
+            detail_scroll: 0,
+            detail_content_height: 0,
+            detail_viewport_height: 0,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -1869,6 +1925,10 @@ mod tests {
                 max_lane: 0,
             },
             graph_list_state,
+            focused_pane: FocusedPane::default(),
+            detail_scroll: 0,
+            detail_content_height: 0,
+            detail_viewport_height: 0,
             branch_positions: Vec::new(),
             selected_branch_position: None,
             search_state: SearchState::default(),

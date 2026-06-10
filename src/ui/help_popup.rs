@@ -34,11 +34,15 @@ impl Widget for HelpPopup {
                 Span::styled("Move up", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  ] / Tab    ", key_style),
+                Span::styled("  Tab        ", key_style),
+                Span::styled("Switch pane focus (graph / detail)", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  ]          ", key_style),
                 Span::styled("Select next branch", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  [ / S-Tab  ", key_style),
+                Span::styled("  [          ", key_style),
                 Span::styled("Select previous branch", desc_style),
             ]),
             Line::from(vec![

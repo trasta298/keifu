@@ -8,7 +8,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::app::{App, AppMode, InputAction};
+use crate::app::{App, AppMode, FocusedPane, InputAction};
 
 pub struct StatusBar<'a> {
     mode: &'a AppMode,
@@ -18,6 +18,7 @@ pub struct StatusBar<'a> {
     message: Option<&'a str>,
     is_fetching: bool,
     search_info: Option<String>,
+    focused_pane: FocusedPane,
 }
 
 impl<'a> StatusBar<'a> {
@@ -51,6 +52,7 @@ impl<'a> StatusBar<'a> {
             message: app.get_message(),
             is_fetching: app.is_fetching(),
             search_info,
+            focused_pane: app.focused_pane,
         }
     }
 }
@@ -118,18 +120,29 @@ impl<'a> Widget for StatusBar<'a> {
                         spans.push(Span::raw("  "));
                     }
 
-                    spans.push(Span::styled(" j/k ", key_style));
-                    spans.push(Span::styled("move ", desc_style));
-                    spans.push(Span::styled(" Enter ", key_style));
-                    spans.push(Span::styled("checkout ", desc_style));
-                    spans.push(Span::styled(" b ", key_style));
-                    spans.push(Span::styled("branch ", desc_style));
-                    spans.push(Span::styled(" f ", key_style));
-                    spans.push(Span::styled("fetch ", desc_style));
-                    spans.push(Span::styled(" ? ", key_style));
-                    spans.push(Span::styled("help ", desc_style));
-                    spans.push(Span::styled(" q ", key_style));
-                    spans.push(Span::styled("quit", desc_style));
+                    if self.focused_pane == FocusedPane::Detail {
+                        spans.push(Span::styled(" j/k ", key_style));
+                        spans.push(Span::styled("scroll ", desc_style));
+                        spans.push(Span::styled(" Tab ", key_style));
+                        spans.push(Span::styled("graph ", desc_style));
+                        spans.push(Span::styled(" Esc ", key_style));
+                        spans.push(Span::styled("back ", desc_style));
+                        spans.push(Span::styled(" ? ", key_style));
+                        spans.push(Span::styled("help", desc_style));
+                    } else {
+                        spans.push(Span::styled(" j/k ", key_style));
+                        spans.push(Span::styled("move ", desc_style));
+                        spans.push(Span::styled(" Enter ", key_style));
+                        spans.push(Span::styled("checkout ", desc_style));
+                        spans.push(Span::styled(" b ", key_style));
+                        spans.push(Span::styled("branch ", desc_style));
+                        spans.push(Span::styled(" f ", key_style));
+                        spans.push(Span::styled("fetch ", desc_style));
+                        spans.push(Span::styled(" ? ", key_style));
+                        spans.push(Span::styled("help ", desc_style));
+                        spans.push(Span::styled(" q ", key_style));
+                        spans.push(Span::styled("quit", desc_style));
+                    }
                 }
             },
             AppMode::Help => {

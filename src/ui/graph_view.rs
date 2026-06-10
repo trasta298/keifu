@@ -55,6 +55,7 @@ fn display_width(s: &str) -> usize {
 
 pub struct GraphViewWidget<'a> {
     items: Vec<ListItem<'a>>,
+    focused: bool,
 }
 
 impl<'a> GraphViewWidget<'a> {
@@ -84,7 +85,10 @@ impl<'a> GraphViewWidget<'a> {
             })
             .collect();
 
-        Self { items }
+        let focused = matches!(app.mode, crate::app::AppMode::Normal)
+            && app.focused_pane == crate::app::FocusedPane::Graph;
+
+        Self { items, focused }
     }
 }
 
@@ -499,7 +503,7 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
         let block = Block::default()
             .title(" Commits ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(super::pane_border_style(self.focused));
 
         let highlight_style = Style::default()
             .bg(Color::DarkGray)

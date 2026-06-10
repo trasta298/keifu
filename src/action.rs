@@ -24,6 +24,7 @@ pub enum Action {
     Rebase,
 
     // UI
+    FocusNext,
     ToggleHelp,
     Search,
     Refresh,

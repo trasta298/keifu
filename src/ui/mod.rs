@@ -19,7 +19,7 @@ use ratatui::{
 use crate::app::{App, AppMode, InputAction};
 
 use self::{
-    commit_detail::CommitDetailWidget,
+    commit_detail::{CommitDetailWidget, FileListWidget},
     dialog::{BranchInfoPopup, ConfirmDialog, InputDialog},
     file_diff_view::FileDiffViewWidget,
     graph_view::GraphViewWidget,
@@ -36,6 +36,32 @@ const MIN_HEIGHT: u16 = 6;
 /// Minimum widget dimensions for safe rendering
 pub const MIN_WIDGET_WIDTH: u16 = 12;
 pub const MIN_WIDGET_HEIGHT: u16 = 3;
+
+/// Width threshold for switching the detail area to a vertical layout
+const VERTICAL_LAYOUT_THRESHOLD: u16 = 56;
+
+/// Border style for a pane depending on focus
+pub fn pane_border_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+/// Split the detail area into commit info and file list panes
+pub fn split_detail_area(area: Rect) -> (Rect, Rect) {
+    let direction = if area.width <= VERTICAL_LAYOUT_THRESHOLD {
+        Direction::Vertical
+    } else {
+        Direction::Horizontal
+    };
+    let chunks = Layout::default()
+        .direction(direction)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    (chunks[0], chunks[1])
+}
 
 /// Render a placeholder block when widget area is too small
 pub fn render_placeholder_block(area: Rect, buf: &mut Buffer) {
@@ -115,6 +141,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let graph_area = content_vertical[0];
     let detail_area = content_vertical[1];
+    let (commit_area, files_area) = split_detail_area(detail_area);
+
+    // Update detail viewport size and clamp the scroll before rendering
+    app.detail_viewport_height = commit_area.height.saturating_sub(2);
+    let commit_widget = CommitDetailWidget::new(app);
+    app.detail_content_height =
+        commit_widget.estimated_height(commit_area.width.saturating_sub(2));
+    app.scroll_detail(0);
+    let commit_widget = commit_widget.with_scroll(app.detail_scroll);
 
     // Render widgets
     frame.render_stateful_widget(
@@ -122,7 +157,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         graph_area,
         &mut app.graph_list_state,
     );
-    frame.render_widget(CommitDetailWidget::new(app), detail_area);
+    frame.render_widget(commit_widget, commit_area);
+    frame.render_widget(FileListWidget::new(app), files_area);
     frame.render_widget(StatusBar::new(app), status_area);
 
     // Branch info popup (when multiple branches exist on selected node)

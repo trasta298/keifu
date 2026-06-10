@@ -54,11 +54,14 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // Jump to HEAD (@ works with or without Shift depending on keyboard layout)
         (_, KeyCode::Char('@')) => Some(Action::JumpToHead),
 
-        // Branch jump
-        (_, KeyCode::Char(']')) | (KeyModifiers::NONE, KeyCode::Tab) => Some(Action::NextBranch),
-        (_, KeyCode::Char('[')) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
-            Some(Action::PrevBranch)
+        // Pane focus
+        (KeyModifiers::NONE, KeyCode::Tab) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+            Some(Action::FocusNext)
         }
+
+        // Branch jump
+        (_, KeyCode::Char(']')) => Some(Action::NextBranch),
+        (_, KeyCode::Char('[')) => Some(Action::PrevBranch),
 
         // Branch selection within same commit
         (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
