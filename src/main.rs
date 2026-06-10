@@ -2,13 +2,11 @@
 
 use anyhow::Result;
 use clap::Parser;
+use crossterm::event::Event;
 
 use keifu::{
-    app::{App, AppMode},
-    event::{get_key_event, get_mouse_scroll, poll_event},
-    git::configure_git_extensions,
-    keybindings::map_key_to_action,
-    tui, ui,
+    app::App, event::poll_events, git::configure_git_extensions, keybindings::map_key_to_action,
+    mouse, tui, ui,
 };
 
 #[derive(Parser)]
@@ -54,53 +52,26 @@ fn main() -> Result<()> {
             break;
         }
 
-        // Event handling
-        if let Some(event) = poll_event()? {
-            if let Some(key) = get_key_event(&event) {
-                if let Some(action) = map_key_to_action(key, &app.mode) {
-                    if let Err(e) = app.handle_action(action) {
-                        // Show errors in the UI
-                        app.show_error(format!("{}", e));
+        // Process all queued events before the next render
+        for event in poll_events()? {
+            match event {
+                Event::Key(key) => {
+                    if let Some(action) = map_key_to_action(key, &app.mode) {
+                        if let Err(e) = app.handle_action(action) {
+                            // Show errors in the UI
+                            app.show_error(format!("{}", e));
+                        }
                     }
                 }
-            } else if let Some(scroll) = get_mouse_scroll(&event) {
-                let (action, multiplier) = match &app.mode {
-                    AppMode::FileDiff { .. } => {
-                        // Diff view: 3x scroll speed
-                        let a = if scroll > 0 {
-                            keifu::action::Action::ScrollDown
-                        } else {
-                            keifu::action::Action::ScrollUp
-                        };
-                        (a, 3)
-                    }
-                    AppMode::FileSelect { .. } => {
-                        // File select: mouse wheel moves selection
-                        let a = if scroll > 0 {
-                            keifu::action::Action::FileSelectDown
-                        } else {
-                            keifu::action::Action::FileSelectUp
-                        };
-                        (a, 1)
-                    }
-                    _ => {
-                        // Normal/other modes: standard graph movement
-                        let a = if scroll > 0 {
-                            keifu::action::Action::MoveDown
-                        } else {
-                            keifu::action::Action::MoveUp
-                        };
-                        (a, 1)
-                    }
-                };
-                for _ in 0..multiplier {
-                    if let Err(e) = app.handle_action(action.clone()) {
-                        app.show_error(format!("{}", e));
-                        break;
-                    }
+                Event::Mouse(mouse_event) => {
+                    mouse::handle_mouse(&mut app, mouse_event);
                 }
+                // Resize events trigger redraw automatically
+                _ => {}
             }
-            // Resize events trigger redraw automatically
+            if app.should_quit {
+                break;
+            }
         }
     }
 

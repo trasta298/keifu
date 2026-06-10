@@ -143,6 +143,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let detail_area = content_vertical[1];
     let (commit_area, files_area) = split_detail_area(detail_area);
 
+    // Record pane regions for mouse hit-testing
+    app.layout = crate::app::LayoutMap {
+        graph: graph_area,
+        commit_detail: commit_area,
+        files: files_area,
+        status_bar: status_area,
+    };
+
     // Update detail viewport size and clamp the scroll before rendering
     app.detail_viewport_height = commit_area.height.saturating_sub(2);
     let commit_widget = CommitDetailWidget::new(app);
@@ -151,6 +159,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.scroll_detail(0);
     let commit_widget = commit_widget.with_scroll(app.detail_scroll);
 
+    let files_widget = FileListWidget::new(app);
+    app.files_pane_scroll = files_widget.scroll_offset(files_area);
+
     // Render widgets
     frame.render_stateful_widget(
         GraphViewWidget::new(app, graph_area.width),
@@ -158,7 +169,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         &mut app.graph_list_state,
     );
     frame.render_widget(commit_widget, commit_area);
-    frame.render_widget(FileListWidget::new(app), files_area);
+    frame.render_widget(files_widget, files_area);
     frame.render_widget(StatusBar::new(app), status_area);
 
     // Branch info popup (when multiple branches exist on selected node)

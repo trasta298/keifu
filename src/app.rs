@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
 use git2::Oid;
@@ -96,6 +97,15 @@ pub enum FocusedPane {
     #[default]
     Graph,
     Detail,
+}
+
+/// Screen regions of the main panes, recorded during render for mouse routing
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutMap {
+    pub graph: Rect,
+    pub commit_detail: Rect,
+    pub files: Rect,
+    pub status_bar: Rect,
 }
 
 /// Confirmation action kinds
@@ -204,6 +214,12 @@ pub struct App {
     pub detail_content_height: u16,
     /// Visible height of the commit detail pane (updated during render)
     pub detail_viewport_height: u16,
+    /// Pane regions for mouse hit-testing (updated during render)
+    pub layout: LayoutMap,
+    /// Scroll offset of the changed files pane (updated during render)
+    pub files_pane_scroll: u16,
+    /// Last mouse click (time, column, row) for double-click detection
+    pub last_click: Option<(Instant, u16, u16)>,
 
     // Branch selection state
     /// List of (node_index, branch_name) for all branches
@@ -317,6 +333,9 @@ impl App {
             detail_scroll: 0,
             detail_content_height: 0,
             detail_viewport_height: 0,
+            layout: LayoutMap::default(),
+            files_pane_scroll: 0,
+            last_click: None,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -1600,12 +1619,37 @@ impl App {
         (self.detail_viewport_height / 2).max(1) as i32
     }
 
-    fn move_selection(&mut self, delta: i32) {
+    pub fn move_selection(&mut self, delta: i32) {
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         let current = self.graph_list_state.selected().unwrap_or(0);
         let new = (current as i32 + delta).clamp(0, max as i32) as usize;
         self.graph_list_state.select(Some(new));
         self.sync_branch_selection_to_node(new);
+    }
+
+    /// Select a graph node by absolute index (mouse click)
+    pub fn select_node(&mut self, idx: usize) {
+        if idx >= self.graph_layout.nodes.len() {
+            return;
+        }
+        self.graph_list_state.select(Some(idx));
+        self.sync_branch_selection_to_node(idx);
+    }
+
+    /// Enter file select mode with the given file index (mouse click).
+    /// Does nothing when no diff is available or the index is out of range.
+    pub fn open_file_select(&mut self, file_idx: usize) {
+        let Some(diff) = self.cached_diff() else {
+            return;
+        };
+        if file_idx >= diff.files.len() {
+            return;
+        }
+        let file_list = diff.files.clone();
+        self.mode = AppMode::FileSelect {
+            selected_index: file_idx,
+            file_list,
+        };
     }
 
     fn select_first(&mut self) {
@@ -1860,6 +1904,9 @@ mod tests {
             detail_scroll: 0,
             detail_content_height: 0,
             detail_viewport_height: 0,
+            layout: LayoutMap::default(),
+            files_pane_scroll: 0,
+            last_click: None,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -1929,6 +1976,9 @@ mod tests {
             detail_scroll: 0,
             detail_content_height: 0,
             detail_viewport_height: 0,
+            layout: LayoutMap::default(),
+            files_pane_scroll: 0,
+            last_click: None,
             branch_positions: Vec::new(),
             selected_branch_position: None,
             search_state: SearchState::default(),
