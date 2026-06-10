@@ -13,33 +13,12 @@ cargo fmt --check
 
 ## Debugging the TUI yourself
 
-keifu has a remote-control debug server, so you can drive the real app and
-see its screen without a human. See docs/debugging.md for the full protocol.
-
-```bash
-# Launch in a PTY with the debug server (and optional log file)
-script -qec "./target/debug/keifu --debug-listen 127.0.0.1:7167 --log-file /tmp/keifu.log" /dev/null &
-sleep 2
-
-# Send keys (same bindings as a user pressing them)
-printf '%s\n' '{"cmd":"keys","keys":"j j <enter>"}' | nc -q1 127.0.0.1 7167
-
-# Dump the rendered screen as plain text (size is optional)
-printf '%s\n' '{"cmd":"dump","width":100,"height":30}' | nc -q1 127.0.0.1 7167
-
-# Inspect app state (mode, selection, focus, async ops)
-printf '%s\n' '{"cmd":"state"}' | nc -q1 127.0.0.1 7167
-
-# Synthetic mouse input: click / scroll_up / scroll_down at (x, y)
-printf '%s\n' '{"cmd":"mouse","kind":"click","x":5,"y":3}' | nc -q1 127.0.0.1 7167
-
-# Quit the app
-printf '%s\n' '{"cmd":"keys","keys":"q"}' | nc -q1 127.0.0.1 7167
-```
-
-Log levels are controlled with the `KEIFU_LOG` env var (RUST_LOG syntax,
-default `debug`). Always reproduce UI bugs through this interface (drive →
-dump → assert) before and after a fix.
+keifu has a remote-control debug server (`--debug-listen`), so you can drive
+the real app and see its screen without a human. Use the **debug-tui** skill
+(`.claude/skills/debug-tui/SKILL.md`) for the full workflow and its gotchas;
+the wire protocol is documented in docs/debugging.md. Always reproduce
+TUI-affecting bugs through that interface (drive → dump → assert) before and
+after a fix.
 
 ## Architecture quick map
 
