@@ -1,5 +1,7 @@
 //! Application state management
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,11 +19,12 @@ use crate::{
         build_graph,
         graph::GraphLayout,
         operations::{
-            checkout_branch, checkout_commit, checkout_remote_branch, create_branch, delete_branch,
-            fetch_origin, merge_branch, rebase_branch,
+            checkout_branch, checkout_commit, checkout_remote_branch, create_branch, create_commit,
+            delete_branch, fetch_origin, merge_branch, push_branch, rebase_branch, stage_all,
+            stage_path, unstage_all, unstage_path,
         },
         BranchInfo, CommitDiffInfo, CommitInfo, FileDiffContent, FileDiffInfo, GitRepository,
-        WorkingTreeStatus,
+        StageState, WorkingTreeStatus,
     },
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
@@ -89,6 +92,7 @@ pub enum AppMode {
 pub enum InputAction {
     CreateBranch,
     Search,
+    CommitMessage,
 }
 
 /// Focusable panes in Normal mode
@@ -114,6 +118,7 @@ pub enum ConfirmAction {
     DeleteBranch(String),
     Merge(String),
     Rebase(String),
+    Push(String),
 }
 
 /// Result of async diff computation
@@ -233,6 +238,9 @@ pub struct App {
     // Latest working tree status snapshot
     working_tree_status: Option<WorkingTreeStatus>,
 
+    /// Per-file stage states (populated while the uncommitted node is selected)
+    pub stage_states: HashMap<PathBuf, StageState>,
+
     // Diff cache (async load)
     diff_cache: Option<CommitDiffInfo>,
     diff_cache_oid: Option<Oid>,
@@ -265,6 +273,9 @@ pub struct App {
     fetch_receiver: Option<Receiver<Result<(), String>>>,
     /// Whether to suppress error dialogs for fetch failures (for auto-fetch)
     fetch_silent: bool,
+
+    // Async push
+    push_receiver: Option<Receiver<Result<(), String>>>,
 
     // Auto-refresh state
     config: Config,
@@ -320,7 +331,7 @@ impl App {
             Some(0)
         };
 
-        Ok(Self {
+        let mut app = Self {
             mode: AppMode::Normal,
             repo,
             repo_path,
@@ -340,6 +351,7 @@ impl App {
             selected_branch_position,
             search_state: SearchState::default(),
             working_tree_status,
+            stage_states: HashMap::new(),
             diff_cache: None,
             diff_cache_oid: None,
             diff_loading_oid: None,
@@ -359,10 +371,13 @@ impl App {
             message_time: initial_message_time,
             fetch_receiver: None,
             fetch_silent: false,
+            push_receiver: None,
             config,
             last_refresh_time: now,
             last_fetch_time: now,
-        })
+        };
+        app.refresh_stage_states();
+        Ok(app)
     }
 
     /// Clear all diff caches
@@ -600,6 +615,8 @@ impl App {
             }
         }
 
+        self.refresh_stage_states();
+
         Ok(())
     }
 
@@ -718,6 +735,48 @@ impl App {
         self.fetch_receiver.is_some()
     }
 
+    /// Check if push is currently in progress
+    pub fn is_pushing(&self) -> bool {
+        self.push_receiver.is_some()
+    }
+
+    /// Check if async push has completed and process the result
+    pub fn update_push_status(&mut self) {
+        let Some(rx) = &self.push_receiver else {
+            return;
+        };
+        let Ok(result) = rx.try_recv() else {
+            return;
+        };
+        self.push_receiver = None;
+
+        match result {
+            Ok(()) => {
+                self.set_message("Pushed to origin");
+                self.reset_timers();
+                if let Err(e) = self.refresh(true) {
+                    self.show_error(format!("Refresh failed: {e}"));
+                }
+            }
+            Err(e) => self.show_error(e),
+        }
+    }
+
+    /// Start push in background
+    fn start_push(&mut self, branch: String) {
+        let (tx, rx) = mpsc::channel();
+        let repo_path = self.repo_path.clone();
+        let message = format!("Pushing '{}' to origin...", branch);
+
+        thread::spawn(move || {
+            let result = push_branch(&repo_path, &branch).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+
+        self.push_receiver = Some(rx);
+        self.set_message(message);
+    }
+
     /// Check and perform auto-refresh if interval has elapsed
     pub fn check_auto_refresh(&mut self) {
         if self.is_fetching() {
@@ -789,8 +848,8 @@ impl App {
     pub fn get_message(&self) -> Option<&str> {
         const MESSAGE_TIMEOUT_SECS: u64 = 5;
 
-        // Don't timeout while fetching
-        if self.is_fetching() {
+        // Don't timeout while fetching or pushing
+        if self.is_fetching() || self.is_pushing() {
             return self.message.as_deref();
         }
 
@@ -1125,11 +1184,29 @@ impl App {
                             selected_index: 0,
                             file_list,
                         };
+                        self.refresh_stage_states();
                     }
                 } else if self.is_diff_loading() {
                     self.set_message("Loading diff...");
                 } else {
                     self.set_message("Diff not available");
+                }
+            }
+            Action::CommitDialog => {
+                self.open_commit_dialog();
+            }
+            Action::Push => {
+                if self.is_pushing() {
+                    self.set_message("Push already in progress");
+                } else if self.repo.repo.head_detached().unwrap_or(false) {
+                    self.set_message("Cannot push: detached HEAD");
+                } else if let Some(branch) = self.head_name.clone() {
+                    self.mode = AppMode::Confirm {
+                        message: format!("Push '{}' to origin?", branch),
+                        action: ConfirmAction::Push(branch),
+                    };
+                } else {
+                    self.set_message("Cannot push: no current branch");
                 }
             }
             _ => {}
@@ -1190,6 +1267,18 @@ impl App {
                         self.set_message(format!("Cannot open diff: {e}"));
                     }
                 }
+            }
+            Action::StageToggle => {
+                self.stage_toggle_selected()?;
+            }
+            Action::StageAll => {
+                self.stage_all_files(true)?;
+            }
+            Action::UnstageAll => {
+                self.stage_all_files(false)?;
+            }
+            Action::CommitDialog => {
+                self.open_commit_dialog();
             }
             Action::Cancel | Action::Quit => {
                 self.return_to_normal();
@@ -1496,6 +1585,16 @@ impl App {
                         // Jump to selected result and exit search mode
                         self.jump_to_search_result();
                     }
+                    InputAction::CommitMessage => {
+                        let message = input.trim().to_string();
+                        if message.is_empty() {
+                            self.set_message("Commit message is empty");
+                            return Ok(());
+                        }
+                        let oid = create_commit(&self.repo.repo, &message)?;
+                        self.set_message(format!("Committed {}", &oid.to_string()[..7]));
+                        self.refresh(true)?;
+                    }
                 }
                 // Clear search state after confirming
                 self.search_state = SearchState::default();
@@ -1592,6 +1691,12 @@ impl App {
                     ConfirmAction::Rebase(name) => {
                         rebase_branch(&self.repo.repo, &name)?;
                     }
+                    ConfirmAction::Push(branch) => {
+                        // Runs in the background; no refresh needed yet
+                        self.start_push(branch);
+                        self.mode = AppMode::Normal;
+                        return Ok(());
+                    }
                 }
                 self.refresh(true)?;
                 self.mode = AppMode::Normal;
@@ -1650,6 +1755,7 @@ impl App {
             selected_index: file_idx,
             file_list,
         };
+        self.refresh_stage_states();
     }
 
     fn select_first(&mut self) {
@@ -1661,6 +1767,91 @@ impl App {
         let max = self.graph_layout.nodes.len().saturating_sub(1);
         self.graph_list_state.select(Some(max));
         self.sync_branch_selection_to_node(max);
+    }
+
+    /// Whether the uncommitted changes node is currently selected
+    pub fn is_uncommitted_selected(&self) -> bool {
+        matches!(self.current_diff_target(), Some(DiffTarget::Uncommitted))
+    }
+
+    /// Refresh per-file stage states (only while the uncommitted node is selected)
+    fn refresh_stage_states(&mut self) {
+        if self.is_uncommitted_selected() {
+            match self.repo.stage_states() {
+                Ok(states) => self.stage_states = states,
+                Err(e) => self.set_message(format!("Failed to read stage states: {e}")),
+            }
+        } else if !self.stage_states.is_empty() {
+            self.stage_states.clear();
+        }
+    }
+
+    /// Toggle stage state of the selected file in file select mode
+    fn stage_toggle_selected(&mut self) -> Result<()> {
+        if !self.is_uncommitted_selected() {
+            self.set_message("Staging is only available for uncommitted changes");
+            return Ok(());
+        }
+        let AppMode::FileSelect {
+            selected_index,
+            file_list,
+        } = &self.mode
+        else {
+            return Ok(());
+        };
+        let Some(file) = file_list.get(*selected_index) else {
+            return Ok(());
+        };
+        let path = file.path.clone();
+
+        let state = self
+            .stage_states
+            .get(&path)
+            .copied()
+            .unwrap_or(StageState::Unstaged);
+        match state {
+            StageState::Staged => unstage_path(&self.repo.repo, &path)?,
+            StageState::Unstaged | StageState::Partial => stage_path(&self.repo.repo, &path)?,
+        }
+        self.refresh_stage_states();
+        Ok(())
+    }
+
+    /// Stage or unstage all working tree changes
+    fn stage_all_files(&mut self, stage: bool) -> Result<()> {
+        if !self.is_uncommitted_selected() {
+            self.set_message("Staging is only available for uncommitted changes");
+            return Ok(());
+        }
+        if stage {
+            stage_all(&self.repo.repo)?;
+        } else {
+            unstage_all(&self.repo.repo)?;
+        }
+        self.refresh_stage_states();
+        Ok(())
+    }
+
+    /// Open the commit message dialog when staged changes exist
+    fn open_commit_dialog(&mut self) {
+        let has_staged = self
+            .repo
+            .stage_states()
+            .map(|states| {
+                states
+                    .values()
+                    .any(|s| matches!(s, StageState::Staged | StageState::Partial))
+            })
+            .unwrap_or(false);
+        if !has_staged {
+            self.set_message("No staged changes (press Space, then 's' to stage files)");
+            return;
+        }
+        self.mode = AppMode::Input {
+            title: "Commit Message".to_string(),
+            input: String::new(),
+            action: InputAction::CommitMessage,
+        };
     }
 
     /// Sync branch selection to the first branch of the given node
@@ -1911,6 +2102,7 @@ mod tests {
             selected_branch_position,
             search_state: SearchState::default(),
             working_tree_status,
+            stage_states: HashMap::new(),
             diff_cache: None,
             diff_cache_oid: None,
             diff_loading_oid: None,
@@ -1930,6 +2122,7 @@ mod tests {
             message_time: initial_message_time,
             fetch_receiver: None,
             fetch_silent: false,
+            push_receiver: None,
             config: Config::default(),
             last_refresh_time: now,
             last_fetch_time: now,
@@ -1983,6 +2176,7 @@ mod tests {
             selected_branch_position: None,
             search_state: SearchState::default(),
             working_tree_status,
+            stage_states: HashMap::new(),
             diff_cache: None,
             diff_cache_oid: None,
             diff_loading_oid: None,
@@ -2002,6 +2196,7 @@ mod tests {
             message_time: None,
             fetch_receiver: None,
             fetch_silent: false,
+            push_receiver: None,
             config: Config::default(),
             last_refresh_time: Instant::now(),
             last_fetch_time: Instant::now(),

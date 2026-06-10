@@ -134,10 +134,12 @@ impl<'a> Widget for StatusBar<'a> {
                         spans.push(Span::styled("move ", desc_style));
                         spans.push(Span::styled(" Enter ", key_style));
                         spans.push(Span::styled("checkout ", desc_style));
-                        spans.push(Span::styled(" b ", key_style));
-                        spans.push(Span::styled("branch ", desc_style));
-                        spans.push(Span::styled(" f ", key_style));
-                        spans.push(Span::styled("fetch ", desc_style));
+                        spans.push(Span::styled(" Space ", key_style));
+                        spans.push(Span::styled("files ", desc_style));
+                        spans.push(Span::styled(" c ", key_style));
+                        spans.push(Span::styled("commit ", desc_style));
+                        spans.push(Span::styled(" p ", key_style));
+                        spans.push(Span::styled("push ", desc_style));
                         spans.push(Span::styled(" ? ", key_style));
                         spans.push(Span::styled("help ", desc_style));
                         spans.push(Span::styled(" q ", key_style));
@@ -178,7 +180,13 @@ impl<'a> Widget for StatusBar<'a> {
                 spans.push(Span::styled(" j/k ", key_style));
                 spans.push(Span::styled("select ", desc_style));
                 spans.push(Span::styled(" Enter ", key_style));
-                spans.push(Span::styled("open diff ", desc_style));
+                spans.push(Span::styled("diff ", desc_style));
+                spans.push(Span::styled(" s ", key_style));
+                spans.push(Span::styled("stage ", desc_style));
+                spans.push(Span::styled(" a/u ", key_style));
+                spans.push(Span::styled("all/none ", desc_style));
+                spans.push(Span::styled(" c ", key_style));
+                spans.push(Span::styled("commit ", desc_style));
                 spans.push(Span::styled(" Esc ", key_style));
                 spans.push(Span::styled("back", desc_style));
             }

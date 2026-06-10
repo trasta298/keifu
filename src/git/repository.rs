@@ -1,5 +1,6 @@
 //! Repository operation wrapper
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -176,6 +177,56 @@ impl GitRepository {
             }))
         }
     }
+
+    /// Get per-file stage states for the working tree
+    pub fn stage_states(&self) -> Result<HashMap<PathBuf, StageState>> {
+        let mut states = HashMap::new();
+        if self.repo.is_bare() {
+            return Ok(states);
+        }
+
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
+
+        for entry in self.repo.statuses(Some(&mut opts))?.iter() {
+            let status = entry.status();
+            let is_staged = status.intersects(
+                Status::INDEX_NEW
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE,
+            );
+            let has_worktree_changes = status.intersects(
+                Status::WT_NEW
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE,
+            );
+
+            let state = match (is_staged, has_worktree_changes) {
+                (true, true) => StageState::Partial,
+                (true, false) => StageState::Staged,
+                (false, true) => StageState::Unstaged,
+                (false, false) => continue,
+            };
+            states.insert(Self::path_from_bytes(entry.path_bytes()), state);
+        }
+
+        Ok(states)
+    }
+}
+
+/// Stage state of a file in the working tree
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageState {
+    Staged,
+    Unstaged,
+    /// Some changes staged, some not
+    Partial,
 }
 
 /// Working tree status

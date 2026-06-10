@@ -16,4 +16,4 @@ pub use diff::{
 };
 pub use extensions::configure_git_extensions;
 pub use graph::build_graph;
-pub use repository::{GitRepository, WorkingTreeStatus};
+pub use repository::{GitRepository, StageState, WorkingTreeStatus};

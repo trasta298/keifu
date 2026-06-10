@@ -76,6 +76,8 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::NONE, KeyCode::Char('b')) => Some(Action::CreateBranch),
         (KeyModifiers::NONE, KeyCode::Char('d')) => Some(Action::DeleteBranch),
         (KeyModifiers::NONE, KeyCode::Char('f')) => Some(Action::Fetch),
+        (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::CommitDialog),
+        (KeyModifiers::NONE, KeyCode::Char('p')) => Some(Action::Push),
         // TODO: merge and rebase will be implemented in the future
         // (KeyModifiers::NONE, KeyCode::Char('m')) => Some(Action::Merge),
         // (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Action::Rebase),
@@ -154,6 +156,11 @@ fn map_file_select_mode(key: KeyEvent) -> Option<Action> {
             Some(Action::FileSelectUp)
         }
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::OpenFileDiff),
+        // Staging (uncommitted changes only)
+        (KeyModifiers::NONE, KeyCode::Char('s')) => Some(Action::StageToggle),
+        (KeyModifiers::NONE, KeyCode::Char('a')) => Some(Action::StageAll),
+        (KeyModifiers::NONE, KeyCode::Char('u')) => Some(Action::UnstageAll),
+        (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::CommitDialog),
         (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
             Some(Action::Cancel)
         }

@@ -8,8 +8,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use crate::app::{App, AppMode, FocusedPane};
-use crate::git::{CommitDiffInfo, FileChangeKind};
+use crate::git::{CommitDiffInfo, FileChangeKind, StageState};
 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
 
@@ -186,10 +189,12 @@ impl<'a> FileListWidget<'a> {
             _ => None,
         };
 
+        let stage_states = app.is_uncommitted_selected().then_some(&app.stage_states);
+
         // Prefer cached data (even if stale) over a loading indicator so that
         // auto-refresh doesn't cause the file list to flicker.
         if let Some(diff) = app.cached_diff() {
-            return Self::build_file_list_lines_from(Some(diff), selected_file_index);
+            return Self::build_file_list_lines_from(Some(diff), selected_file_index, stage_states);
         }
         if app.is_diff_loading() {
             return vec![Line::from(Span::styled(
@@ -197,12 +202,13 @@ impl<'a> FileListWidget<'a> {
                 Style::default().fg(Color::DarkGray),
             ))];
         }
-        Self::build_file_list_lines_from(None, None)
+        Self::build_file_list_lines_from(None, None, None)
     }
 
     fn build_file_list_lines_from(
         diff: Option<&CommitDiffInfo>,
         selected_file_index: Option<usize>,
+        stage_states: Option<&HashMap<PathBuf, StageState>>,
     ) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
@@ -211,7 +217,7 @@ impl<'a> FileListWidget<'a> {
         };
 
         // Header row
-        lines.push(Line::from(vec![
+        let mut header = vec![
             Span::styled(
                 format!("{} files changed", diff.total_files),
                 Style::default().add_modifier(Modifier::BOLD),
@@ -226,7 +232,21 @@ impl<'a> FileListWidget<'a> {
                 format!("-{}", diff.total_deletions),
                 Style::default().fg(Color::Red),
             ),
-        ]));
+        ];
+        if let Some(states) = stage_states {
+            let staged = states
+                .values()
+                .filter(|s| matches!(s, StageState::Staged | StageState::Partial))
+                .count();
+            if staged > 0 {
+                header.push(Span::raw("  "));
+                header.push(Span::styled(
+                    format!("● {} staged", staged),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+        }
+        lines.push(Line::from(header));
         lines.push(Line::from(""));
 
         // File list
@@ -243,10 +263,23 @@ impl<'a> FileListWidget<'a> {
 
             let path_str = file.path.to_string_lossy().to_string();
 
-            let mut spans = vec![
-                Span::styled(format!(" {} ", indicator), Style::default().fg(color)),
-                Span::raw(path_str),
-            ];
+            let mut spans = Vec::new();
+            if let Some(states) = stage_states {
+                let (mark, mark_color) = match states.get(&file.path) {
+                    Some(StageState::Staged) => ("●", Color::Green),
+                    Some(StageState::Partial) => ("◐", Color::Yellow),
+                    _ => ("○", Color::DarkGray),
+                };
+                spans.push(Span::styled(
+                    format!(" {}", mark),
+                    Style::default().fg(mark_color),
+                ));
+            }
+            spans.push(Span::styled(
+                format!(" {} ", indicator),
+                Style::default().fg(color),
+            ));
+            spans.push(Span::raw(path_str));
 
             if file.is_binary {
                 spans.push(Span::raw(" "));

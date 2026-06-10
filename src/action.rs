@@ -23,6 +23,13 @@ pub enum Action {
     Merge,
     Rebase,
 
+    // Staging / commit / push
+    StageToggle,
+    StageAll,
+    UnstageAll,
+    CommitDialog,
+    Push,
+
     // UI
     FocusNext,
     ToggleHelp,
