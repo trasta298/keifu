@@ -200,7 +200,9 @@ pub fn rebase_branch(repo: &Repository, onto_branch: &str) -> Result<()> {
 
 /// Stage a single path (add to the index, or remove for deleted files)
 pub fn stage_path(repo: &Repository, path: &Path) -> Result<()> {
-    let workdir = repo.workdir().context("Repository has no working directory")?;
+    let workdir = repo
+        .workdir()
+        .context("Repository has no working directory")?;
     let mut index = repo.index()?;
     if workdir.join(path).exists() {
         index.add_path(path)?;
@@ -273,7 +275,14 @@ pub fn create_commit(repo: &Repository, message: &str) -> Result<Oid> {
     }
 
     let parents: Vec<&git2::Commit> = parent.iter().collect();
-    let oid = repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &parents)?;
+    let oid = repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        message,
+        &tree,
+        &parents,
+    )?;
     Ok(oid)
 }
 
@@ -391,10 +400,7 @@ mod tests {
     #[test]
     fn create_commit_commits_staged_changes_only() {
         let (tempdir, repo) = init_repo_with_commit();
-        repo.config()
-            .unwrap()
-            .set_str("user.name", "Test")
-            .unwrap();
+        repo.config().unwrap().set_str("user.name", "Test").unwrap();
         repo.config()
             .unwrap()
             .set_str("user.email", "test@example.com")
@@ -421,10 +427,7 @@ mod tests {
     #[test]
     fn create_commit_rejects_empty_index() {
         let (_tempdir, repo) = init_repo_with_commit();
-        repo.config()
-            .unwrap()
-            .set_str("user.name", "Test")
-            .unwrap();
+        repo.config().unwrap().set_str("user.name", "Test").unwrap();
         repo.config()
             .unwrap()
             .set_str("user.email", "test@example.com")

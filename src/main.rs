@@ -98,8 +98,12 @@ fn main() -> Result<()> {
         if let Some(rx) = &debug_rx {
             while let Ok(command) = rx.try_recv() {
                 let size = terminal.size()?;
-                let response =
-                    debug_server::handle_request(&mut app, size.width, size.height, command.request);
+                let response = debug_server::handle_request(
+                    &mut app,
+                    size.width,
+                    size.height,
+                    command.request,
+                );
                 let _ = command.reply.send(response);
             }
         }

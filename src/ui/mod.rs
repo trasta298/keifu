@@ -216,8 +216,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Update detail viewport size and clamp the scroll before rendering
     app.detail_viewport_height = commit_area.height.saturating_sub(2);
     let commit_widget = CommitDetailWidget::new(app);
-    app.detail_content_height =
-        commit_widget.estimated_height(commit_area.width.saturating_sub(2));
+    app.detail_content_height = commit_widget.estimated_height(commit_area.width.saturating_sub(2));
     app.scroll_detail(0);
     let commit_widget = commit_widget.with_scroll(app.detail_scroll);
 

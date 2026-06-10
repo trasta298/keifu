@@ -28,8 +28,7 @@ impl<'a> CommitDetailWidget<'a> {
         Self {
             commit_lines: Self::build_commit_lines(app),
             scroll: app.detail_scroll,
-            focused: matches!(app.mode, AppMode::Normal)
-                && app.focused_pane == FocusedPane::Detail,
+            focused: matches!(app.mode, AppMode::Normal) && app.focused_pane == FocusedPane::Detail,
         }
     }
 
