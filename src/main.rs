@@ -1,12 +1,14 @@
 //! keifu: a TUI tool that shows Git commit graphs
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::Event;
 
 use keifu::{
-    app::App, event::poll_events, git::configure_git_extensions, keybindings::map_key_to_action,
-    mouse, tui, ui,
+    app::App, debug_server, event::poll_events, git::configure_git_extensions,
+    keybindings::map_key_to_action, logging, mouse, tui, ui,
 };
 
 #[derive(Parser)]
@@ -15,10 +17,27 @@ use keifu::{
     version,
     about = "A TUI tool to visualize Git commit graphs with branch genealogy"
 )]
-struct Cli {}
+struct Cli {
+    /// Append debug logs to this file (level via KEIFU_LOG, default "debug")
+    #[arg(long, value_name = "PATH")]
+    log_file: Option<PathBuf>,
+
+    /// Listen for debug commands (NDJSON over TCP, e.g. 127.0.0.1:7167)
+    #[arg(long, value_name = "ADDR")]
+    debug_listen: Option<String>,
+}
 
 fn main() -> Result<()> {
-    Cli::parse();
+    let cli = Cli::parse();
+
+    if let Some(path) = &cli.log_file {
+        logging::init(path)?;
+    }
+    let debug_rx = match &cli.debug_listen {
+        Some(addr) => Some(debug_server::spawn(addr)?),
+        None => None,
+    };
+
     // Restore the terminal on panic
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -72,6 +91,16 @@ fn main() -> Result<()> {
             }
             if app.should_quit {
                 break;
+            }
+        }
+
+        // Process pending debug commands
+        if let Some(rx) = &debug_rx {
+            while let Ok(command) = rx.try_recv() {
+                let size = terminal.size()?;
+                let response =
+                    debug_server::handle_request(&mut app, size.width, size.height, command.request);
+                let _ = command.reply.send(response);
             }
         }
     }

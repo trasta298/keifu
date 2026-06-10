@@ -491,6 +491,7 @@ impl App {
     /// If `force` is true, always clears diff cache (for manual refresh)
     /// If `force` is false, keeps cache when the same content is selected (for auto-refresh)
     pub fn refresh(&mut self, force: bool) -> Result<()> {
+        tracing::debug!(force, "refresh repository data");
         // Save the current selection state for restoration
         let was_uncommitted_selected = self
             .graph_list_state
@@ -904,11 +905,13 @@ impl App {
                 Ok((result, status)) => {
                     match result {
                         Ok(diff) => {
+                            tracing::debug!(files = diff.files.len(), "uncommitted diff loaded");
                             self.uncommitted_diff_cache = Some(diff);
                             self.uncommitted_diff_failed = false;
                             self.sync_file_list_with_uncommitted_diff();
                         }
                         Err(e) => {
+                            tracing::warn!(error = %e, "uncommitted diff load failed");
                             self.uncommitted_diff_cache = None;
                             self.uncommitted_diff_failed = true;
                             self.set_message(format!("Failed to load diff: {e}"));
@@ -967,6 +970,7 @@ impl App {
 
         match target {
             DiffTarget::Uncommitted => {
+                tracing::debug!("spawning uncommitted diff computation");
                 // Compute uncommitted diff in the background
                 let (tx, rx) = mpsc::channel();
                 let repo_path = self.repo_path.clone();
@@ -998,6 +1002,7 @@ impl App {
                 });
             }
             DiffTarget::Commit(oid) => {
+                tracing::debug!(%oid, "spawning commit diff computation");
                 // Compute diff in the background
                 let (tx, rx) = mpsc::channel();
                 let repo_path = self.repo_path.clone();
@@ -1055,6 +1060,7 @@ impl App {
 
     /// Show an error
     pub fn show_error(&mut self, message: String) {
+        tracing::warn!(%message, "showing error");
         self.mode = AppMode::Error { message };
     }
 
