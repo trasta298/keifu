@@ -227,8 +227,6 @@ pub struct App {
     pub last_click: Option<(Instant, u16, u16)>,
     /// Clickable status bar hint regions (updated during render)
     pub status_hints: Vec<(Rect, Action)>,
-    /// Last applied wheel scroll (time, direction) for burst throttling
-    last_wheel_scroll: Option<(Instant, i32)>,
 
     // Branch selection state
     /// List of (node_index, branch_name) for all branches
@@ -352,7 +350,6 @@ impl App {
             files_pane_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
-            last_wheel_scroll: None,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -1750,26 +1747,6 @@ impl App {
         self.detail_scroll = (self.detail_scroll as i32 + delta).clamp(0, max as i32) as u16;
     }
 
-    /// Whether a wheel scroll step in the given direction should be applied.
-    ///
-    /// Ghostty fans a single wheel notch out into several scroll events that
-    /// can span multiple event batches, so batch coalescing alone still lets
-    /// 2-3 of them through (issue #12). Same-direction events arriving within
-    /// the throttle window are residue of the same notch and get dropped;
-    /// deliberate consecutive notches arrive further apart.
-    pub fn accept_wheel_scroll(&mut self, direction: i32) -> bool {
-        const WHEEL_THROTTLE: Duration = Duration::from_millis(30);
-
-        let now = Instant::now();
-        if let Some((time, dir)) = self.last_wheel_scroll {
-            if dir == direction && now.duration_since(time) < WHEEL_THROTTLE {
-                return false;
-            }
-        }
-        self.last_wheel_scroll = Some((now, direction));
-        true
-    }
-
     fn max_detail_scroll(&self) -> u16 {
         self.detail_content_height
             .saturating_sub(self.detail_viewport_height)
@@ -2154,7 +2131,6 @@ mod tests {
             files_pane_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
-            last_wheel_scroll: None,
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -2230,7 +2206,6 @@ mod tests {
             files_pane_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
-            last_wheel_scroll: None,
             branch_positions: Vec::new(),
             selected_branch_position: None,
             search_state: SearchState::default(),
@@ -2360,21 +2335,6 @@ mod tests {
         assert!(!app.uncommitted_diff_loading);
         assert!(app.uncommitted_diff_receiver.is_none());
         assert_eq!(app.message.as_deref(), Some("Failed to load diff: boom"));
-    }
-
-    #[test]
-    fn wheel_scroll_burst_residue_is_throttled() {
-        let (_tempdir, repo) = init_repo();
-        let mut app = make_app_from_repo(repo);
-
-        // First event of a notch passes, residue in the same direction is dropped
-        assert!(app.accept_wheel_scroll(1));
-        assert!(!app.accept_wheel_scroll(1));
-        // Direction change is a new gesture
-        assert!(app.accept_wheel_scroll(-1));
-        // After the throttle window, the next notch passes
-        app.last_wheel_scroll = Some((Instant::now() - Duration::from_millis(50), -1));
-        assert!(app.accept_wheel_scroll(-1));
     }
 
     #[test]

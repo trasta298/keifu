@@ -43,10 +43,6 @@ fn inner_row(rect: Rect, y: u16) -> Option<u16> {
 }
 
 fn handle_scroll(app: &mut App, delta: i32, x: u16, y: u16) {
-    // Drop residue events of the same wheel notch (Ghostty sends several)
-    if !app.accept_wheel_scroll(delta) {
-        return;
-    }
     match &app.mode {
         AppMode::FileDiff { .. } => {
             let action = if delta > 0 {
