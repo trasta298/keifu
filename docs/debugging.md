@@ -16,6 +16,23 @@ Appends `tracing` logs to the file. The level filter is read from the
 KEIFU_LOG=trace keifu --log-file /tmp/keifu.log
 ```
 
+The log rotates once it exceeds 5 MB (one `.old` generation is kept).
+
+### Measuring performance with the log alone
+
+The log is enough to diagnose slowness — no debug server needed:
+
+```bash
+keifu --log-file /tmp/keifu.log
+# ...reproduce the slow interaction, then quit with q...
+tail -30 /tmp/keifu.log
+```
+
+- Operations slower than 10 ms are logged live as `slow operation`
+  (`draw`, `events`, `refresh`, `refresh.status`, `refresh.log`,
+  `refresh.graph`, `stage_states`, `open_file_diff`, ...)
+- On exit, a `perf summary` line per operation reports count/avg/max
+
 ## Remote control server
 
 ```bash

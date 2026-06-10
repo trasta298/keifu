@@ -18,7 +18,8 @@ use keifu::{
     about = "A TUI tool to visualize Git commit graphs with branch genealogy"
 )]
 struct Cli {
-    /// Append debug logs to this file (level via KEIFU_LOG, default "debug")
+    /// Append debug logs and a perf summary on exit to this file
+    /// (level via KEIFU_LOG, default "debug")
     #[arg(long, value_name = "PATH")]
     log_file: Option<PathBuf>,
 
@@ -115,6 +116,8 @@ fn main() -> Result<()> {
             }
         }
     }
+
+    app.perf.log_summary();
 
     // Restore terminal
     tui::restore()?;

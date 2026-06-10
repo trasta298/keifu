@@ -68,6 +68,22 @@ impl PerfStats {
     pub fn slow_log(&self) -> impl Iterator<Item = (&'static str, Duration)> + '_ {
         self.slow_log.iter().copied()
     }
+
+    /// Emit an aggregate summary to the log (called on exit)
+    pub fn log_summary(&self) {
+        let ms = |d: Duration| (d.as_secs_f64() * 1000.0 * 100.0).round() / 100.0;
+        let mut ops: Vec<_> = self.ops().collect();
+        ops.sort_by_key(|(name, _)| *name);
+        for (name, agg) in ops {
+            tracing::info!(
+                op = name,
+                count = agg.count,
+                avg_ms = ms(agg.avg()),
+                max_ms = ms(agg.max),
+                "perf summary"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
