@@ -20,12 +20,15 @@ pub fn init() -> Result<Tui> {
     // EnableMouseCapture also turns on any-motion tracking (?1003), which
     // reports every cursor movement and flooded the event loop with redraws
     // (CPU spikes reported in #12). keifu only needs clicks, drags, and
-    // wheel events, so switch motion tracking back off.
+    // wheel events. The tracking modes are mutually exclusive in xterm
+    // semantics, so after switching ?1003 off, button-event tracking
+    // (?1002) must be re-enabled — ?1003l alone disables the mouse
+    // entirely.
     execute!(
         stdout,
         EnterAlternateScreen,
         EnableMouseCapture,
-        Print("\x1b[?1003l")
+        Print("\x1b[?1003l\x1b[?1002h")
     )?;
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::new(backend)?;

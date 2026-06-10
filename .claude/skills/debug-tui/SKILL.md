@@ -75,6 +75,11 @@ Full protocol details: `docs/debugging.md`. Implementation: `src/debug_server.rs
   ~200 ms; wrap `nc` in `timeout` and don't interpret slowness as a hang.
 - A held-open `nc` may exit non-zero via `timeout` even after delivering the
   response — check the output, not the exit code.
+- **Injected input bypasses the terminal's input layer.** `keys`/`mouse`
+  commands go straight into the app, so they cannot verify anything that
+  depends on terminal modes — e.g. mouse tracking escape sequences
+  (?1000/?1002/?1003) set in `src/tui.rs`. Changes there need a human in a
+  real terminal.
 - **`q` only quits from the graph pane.** If another pane is focused or a
   popup is open (e.g. after a mouse click), `q`/`<esc>` first returns
   focus/closes the popup and the app keeps running. Send
