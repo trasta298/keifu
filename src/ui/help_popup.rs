@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
 pub struct HelpPopup;
@@ -164,6 +164,7 @@ impl Widget for HelpPopup {
             .title(" Help ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
+            .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
         let paragraph = Paragraph::new(lines).block(block);

@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget},
+    widgets::{List, ListItem, ListState, StatefulWidget},
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -500,10 +500,7 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
             return;
         }
 
-        let block = Block::default()
-            .title(" Commits ")
-            .borders(Borders::ALL)
-            .border_style(super::pane_border_style(self.focused));
+        let block = super::pane_block("Commits", self.focused);
 
         let highlight_style = Style::default()
             .bg(Color::DarkGray)

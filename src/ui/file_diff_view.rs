@@ -7,7 +7,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 use similar::{ChangeTag, TextDiff};
 use syntect::easy::HighlightLines;
@@ -532,6 +532,7 @@ impl<'a> Widget for FileDiffViewWidget<'a> {
             .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
+            .border_type(BorderType::Rounded)
             .title_style(
                 Style::default()
                     .fg(Color::White)

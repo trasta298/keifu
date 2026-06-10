@@ -84,6 +84,19 @@ fn handle_click(app: &mut App, x: u16, y: u16) {
     );
     app.last_click = Some((now, x, y));
 
+    // Status bar hints are clickable in every mode
+    if contains(app.layout.status_bar, x, y) {
+        let action = app
+            .status_hints
+            .iter()
+            .find(|(rect, _)| contains(*rect, x, y))
+            .map(|(_, action)| action.clone());
+        if let Some(action) = action {
+            dispatch(app, action);
+        }
+        return;
+    }
+
     match &app.mode {
         AppMode::Help | AppMode::Error { .. } => {
             dispatch(app, Action::Cancel);

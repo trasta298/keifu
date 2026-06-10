@@ -225,6 +225,8 @@ pub struct App {
     pub files_pane_scroll: u16,
     /// Last mouse click (time, column, row) for double-click detection
     pub last_click: Option<(Instant, u16, u16)>,
+    /// Clickable status bar hint regions (updated during render)
+    pub status_hints: Vec<(Rect, Action)>,
 
     // Branch selection state
     /// List of (node_index, branch_name) for all branches
@@ -347,6 +349,7 @@ impl App {
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
             last_click: None,
+            status_hints: Vec::new(),
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -2104,6 +2107,7 @@ mod tests {
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
             last_click: None,
+            status_hints: Vec::new(),
             branch_positions,
             selected_branch_position,
             search_state: SearchState::default(),
@@ -2178,6 +2182,7 @@ mod tests {
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
             last_click: None,
+            status_hints: Vec::new(),
             branch_positions: Vec::new(),
             selected_branch_position: None,
             search_state: SearchState::default(),

@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use std::collections::HashMap;
@@ -145,10 +145,7 @@ impl<'a> Widget for CommitDetailWidget<'a> {
             return;
         }
 
-        let block = Block::default()
-            .title(" Commit Detail ")
-            .borders(Borders::ALL)
-            .border_style(super::pane_border_style(self.focused));
+        let block = super::pane_block("Commit Detail", self.focused);
 
         let max_scroll = self
             .estimated_height(area.width.saturating_sub(2))
@@ -329,6 +326,9 @@ impl<'a> FileListWidget<'a> {
     /// Scroll offset of the file list so the selected file stays visible.
     /// File lines: 2 header lines (summary + blank) + file entries.
     pub fn scroll_offset(&self, area: Rect) -> u16 {
+        if !self.focused {
+            return 0;
+        }
         let visible_height = area.height.saturating_sub(2); // minus block borders
         let total_lines = self.file_lines.len() as u16;
         let selected_line = self.file_scroll + 2; // offset for header lines
@@ -348,10 +348,7 @@ impl<'a> Widget for FileListWidget<'a> {
             return;
         }
 
-        let block = Block::default()
-            .title(" Changed Files ")
-            .borders(Borders::ALL)
-            .border_style(super::pane_border_style(self.focused));
+        let block = super::pane_block("Changed Files", self.focused);
 
         let scroll_y = self.scroll_offset(area);
 

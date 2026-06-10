@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
 /// Truncate a string to fit within max_width, adding "..." if needed
@@ -37,6 +37,7 @@ impl<'a> Widget for InputDialog<'a> {
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
+            .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
         let input_style = Style::default()
@@ -79,6 +80,7 @@ impl<'a> Widget for ConfirmDialog<'a> {
             .title(" Confirm ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
+            .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
         let lines = vec![
@@ -132,6 +134,7 @@ impl<'a> Widget for BranchInfoPopup<'a> {
             .title(" Branches ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Blue))
+            .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
         let inner = block.inner(area);

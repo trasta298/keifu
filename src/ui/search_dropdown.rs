@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Widget},
+    widgets::{Block, BorderType, Borders, Clear, Widget},
 };
 
 const MAX_VISIBLE_RESULTS: usize = 7;
@@ -110,6 +110,7 @@ impl<'a> Widget for SearchDropdown<'a> {
             .title(" Search branches ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
+            .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
         let inner = block.inner(area);
