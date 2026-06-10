@@ -817,13 +817,21 @@ impl App {
                         }
                     }
                     // Set the cache key only when the thread's status snapshot
-                    // still matches the current working tree status.  If
-                    // refresh() has already observed a newer state, leave the
-                    // key as None so the next update_diff_cache() tick starts a
-                    // fresh computation.  The stale diff data is kept in
-                    // uncommitted_diff_cache for display to avoid flicker until
-                    // the new result arrives.
+                    // still matches the current working tree status.  When they
+                    // differ, `working_tree_status` itself may simply be stale
+                    // (auto-refresh is paused in FileSelect/FileDiff modes), so
+                    // re-snapshot before deciding.  Without this, a single
+                    // mismatch caused an endless load loop: the key was never
+                    // set, so every tick discarded the result and recomputed
+                    // (issue #26).
                     let effective_status = status.or_else(|| self.working_tree_status.clone());
+                    if effective_status.as_ref() != self.working_tree_status.as_ref() {
+                        let (fresh, message) = Self::working_tree_status_snapshot(&self.repo);
+                        if let Some(message) = message {
+                            self.set_message(message);
+                        }
+                        self.working_tree_status = fresh;
+                    }
                     if effective_status.as_ref() == self.working_tree_status.as_ref() {
                         self.uncommitted_cache_key = effective_status;
                     }
@@ -1988,6 +1996,38 @@ mod tests {
         assert!(!app.uncommitted_diff_loading);
         assert!(app.uncommitted_diff_receiver.is_none());
         assert_eq!(app.message.as_deref(), Some("Failed to load diff: boom"));
+    }
+
+    #[test]
+    fn stale_working_tree_status_recovers_after_diff_load_completes() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(tempdir.path()).unwrap();
+        commit_file(&repo, "tracked.txt", "tracked\n", "initial");
+        fs::write(tempdir.path().join("untracked.txt"), "hello\n").unwrap();
+
+        let git_repo = GitRepository::open(tempdir.path()).unwrap();
+        let mut app = make_app_from_repo(git_repo);
+
+        let thread_status = app.repo.get_working_tree_status().unwrap();
+        assert!(thread_status.is_some());
+
+        // Simulate a stale main-thread snapshot (auto-refresh is paused in
+        // FileSelect/FileDiff modes, so this state can persist indefinitely)
+        let mut stale = thread_status.clone().unwrap();
+        stale.mtime_hash = stale.mtime_hash.wrapping_add(1);
+        app.working_tree_status = Some(stale);
+
+        let (tx, rx) = mpsc::channel();
+        tx.send((Ok(CommitDiffInfo::default()), thread_status))
+            .unwrap();
+        app.uncommitted_diff_loading = true;
+        app.uncommitted_diff_receiver = Some(rx);
+
+        app.update_diff_cache();
+
+        assert!(app.uncommitted_cache_key.is_some());
+        assert!(app.cached_diff().is_some());
+        assert!(!app.is_diff_loading());
     }
 
     #[test]
