@@ -21,6 +21,19 @@ auto_fetch = true
 fetch_interval = 60
 ```
 
+## グラフ表示
+
+デフォルトでは、keifu はリモートブランチと、リモートブランチからのみ到達可能なコミットを表示します。
+初期状態で非表示にしたい場合は、次のように設定できます。
+
+```toml
+[graph]
+# リモートブランチをデフォルトで表示する（デフォルト: true）
+show_remote_branches = false
+```
+
+TUI 上では `o` キーでリモートブランチ表示を切り替えられます。
+
 ### オプション一覧
 
 | キー | 型 | デフォルト | 説明 |
@@ -29,6 +42,7 @@ fetch_interval = 60
 | `refresh_interval` | integer | `10` | ローカル更新の間隔（秒）（最小: 1） |
 | `auto_fetch` | bool | `true` | origin からの自動 fetch を有効にする |
 | `fetch_interval` | integer | `60` | リモート fetch の間隔（秒）（最小: 10） |
+| `graph.show_remote_branches` | bool | `true` | リモートブランチと、リモートブランチからのみ到達可能なコミットを表示する |
 
 ### 自動更新を無効にする
 

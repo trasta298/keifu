@@ -9,6 +9,23 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct Config {
     pub refresh: RefreshConfig,
+    pub graph: GraphConfig,
+}
+
+/// Commit graph display configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GraphConfig {
+    /// Show remote branches and commits only reachable from remote branches
+    pub show_remote_branches: bool,
+}
+
+impl Default for GraphConfig {
+    fn default() -> Self {
+        Self {
+            show_remote_branches: true,
+        }
+    }
 }
 
 /// Auto-refresh configuration

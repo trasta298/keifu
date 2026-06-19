@@ -8,166 +8,185 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
-pub struct HelpPopup;
+pub struct HelpPopup {
+    scroll: u16,
+}
+
+impl HelpPopup {
+    pub fn new(scroll: u16) -> Self {
+        Self { scroll }
+    }
+
+    pub fn line_count() -> usize {
+        help_lines().len()
+    }
+}
+
+fn help_lines() -> Vec<Line<'static>> {
+    let key_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::White);
+    let header_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    vec![
+        Line::from(Span::styled("Navigation", header_style)),
+        Line::from(vec![
+            Span::styled("  j / ↓      ", key_style),
+            Span::styled("Move down", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  k / ↑      ", key_style),
+            Span::styled("Move up", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab        ", key_style),
+            Span::styled("Switch pane focus (graph / detail)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  ]          ", key_style),
+            Span::styled("Select next branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  [          ", key_style),
+            Span::styled("Select previous branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  h / ←      ", key_style),
+            Span::styled("Select left branch (same commit)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  l / →      ", key_style),
+            Span::styled("Select right branch (same commit)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Ctrl+d     ", key_style),
+            Span::styled("Page down", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Ctrl+u     ", key_style),
+            Span::styled("Page up", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  g / Home   ", key_style),
+            Span::styled("Go to top", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  G / End    ", key_style),
+            Span::styled("Go to bottom", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  @          ", key_style),
+            Span::styled("Jump to HEAD (current branch)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  o          ", key_style),
+            Span::styled("Toggle remote branches", desc_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Git Operations", header_style)),
+        Line::from(vec![
+            Span::styled("  Enter      ", key_style),
+            Span::styled("Checkout selected branch/commit", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  b          ", key_style),
+            Span::styled("Create new branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  d          ", key_style),
+            Span::styled("Delete branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  f          ", key_style),
+            Span::styled("Fetch from origin", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  c          ", key_style),
+            Span::styled("Commit staged changes", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  p          ", key_style),
+            Span::styled("Push current branch to origin", desc_style),
+        ]),
+        // TODO: merge and rebase will be implemented in the future
+        // Line::from(vec![
+        //     Span::styled("  m          ", key_style),
+        //     Span::styled("Merge branch", desc_style),
+        // ]),
+        // Line::from(vec![
+        //     Span::styled("  r          ", key_style),
+        //     Span::styled("Rebase onto branch", desc_style),
+        // ]),
+        Line::from(""),
+        Line::from(Span::styled("Search", header_style)),
+        Line::from(vec![
+            Span::styled("  /          ", key_style),
+            Span::styled("Search branches", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  ↑ / C-k    ", key_style),
+            Span::styled("Select previous result", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  ↓ / C-j    ", key_style),
+            Span::styled("Select next result", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter      ", key_style),
+            Span::styled("Jump to selected branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Esc        ", key_style),
+            Span::styled("Cancel search", desc_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Diff / Staging", header_style)),
+        Line::from(vec![
+            Span::styled("  Space      ", key_style),
+            Span::styled("View file diffs", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  s          ", key_style),
+            Span::styled("Stage/unstage selected file (file list)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  a / u      ", key_style),
+            Span::styled("Stage all / unstage all (file list)", desc_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Other", header_style)),
+        Line::from(vec![
+            Span::styled("  y          ", key_style),
+            Span::styled("Copy commit hash to clipboard", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Y          ", key_style),
+            Span::styled("Copy branch name to clipboard", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  R          ", key_style),
+            Span::styled("Refresh", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  ?          ", key_style),
+            Span::styled("Toggle this help", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  q / Esc    ", key_style),
+            Span::styled("Quit", desc_style),
+        ]),
+    ]
+}
 
 impl Widget for HelpPopup {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Clear the background
         Clear.render(area, buf);
 
-        let key_style = Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD);
-        let desc_style = Style::default().fg(Color::White);
-        let header_style = Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
-
-        let lines = vec![
-            Line::from(Span::styled("Navigation", header_style)),
-            Line::from(vec![
-                Span::styled("  j / ↓      ", key_style),
-                Span::styled("Move down", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  k / ↑      ", key_style),
-                Span::styled("Move up", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Tab        ", key_style),
-                Span::styled("Switch pane focus (graph / detail)", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  ]          ", key_style),
-                Span::styled("Select next branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  [          ", key_style),
-                Span::styled("Select previous branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  h / ←      ", key_style),
-                Span::styled("Select left branch (same commit)", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  l / →      ", key_style),
-                Span::styled("Select right branch (same commit)", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Ctrl+d     ", key_style),
-                Span::styled("Page down", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Ctrl+u     ", key_style),
-                Span::styled("Page up", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  g / Home   ", key_style),
-                Span::styled("Go to top", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  G / End    ", key_style),
-                Span::styled("Go to bottom", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  @          ", key_style),
-                Span::styled("Jump to HEAD (current branch)", desc_style),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("Git Operations", header_style)),
-            Line::from(vec![
-                Span::styled("  Enter      ", key_style),
-                Span::styled("Checkout selected branch/commit", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  b          ", key_style),
-                Span::styled("Create new branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  d          ", key_style),
-                Span::styled("Delete branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  f          ", key_style),
-                Span::styled("Fetch from origin", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  c          ", key_style),
-                Span::styled("Commit staged changes", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  p          ", key_style),
-                Span::styled("Push current branch to origin", desc_style),
-            ]),
-            // TODO: merge and rebase will be implemented in the future
-            // Line::from(vec![
-            //     Span::styled("  m          ", key_style),
-            //     Span::styled("Merge branch", desc_style),
-            // ]),
-            // Line::from(vec![
-            //     Span::styled("  r          ", key_style),
-            //     Span::styled("Rebase onto branch", desc_style),
-            // ]),
-            Line::from(""),
-            Line::from(Span::styled("Search", header_style)),
-            Line::from(vec![
-                Span::styled("  /          ", key_style),
-                Span::styled("Search branches", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  ↑ / C-k    ", key_style),
-                Span::styled("Select previous result", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  ↓ / C-j    ", key_style),
-                Span::styled("Select next result", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Enter      ", key_style),
-                Span::styled("Jump to selected branch", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Esc        ", key_style),
-                Span::styled("Cancel search", desc_style),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("Diff / Staging", header_style)),
-            Line::from(vec![
-                Span::styled("  Space      ", key_style),
-                Span::styled("View file diffs", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  s          ", key_style),
-                Span::styled("Stage/unstage selected file (file list)", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  a / u      ", key_style),
-                Span::styled("Stage all / unstage all (file list)", desc_style),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("Other", header_style)),
-            Line::from(vec![
-                Span::styled("  y          ", key_style),
-                Span::styled("Copy commit hash to clipboard", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  Y          ", key_style),
-                Span::styled("Copy branch name to clipboard", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  R          ", key_style),
-                Span::styled("Refresh", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  ?          ", key_style),
-                Span::styled("Toggle this help", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  q / Esc    ", key_style),
-                Span::styled("Quit", desc_style),
-            ]),
-        ];
-
+        let lines = help_lines();
         let block = Block::default()
             .title(" Help ")
             .borders(Borders::ALL)
@@ -175,7 +194,7 @@ impl Widget for HelpPopup {
             .border_type(BorderType::Rounded)
             .style(Style::default().bg(Color::Black));
 
-        let paragraph = Paragraph::new(lines).block(block);
+        let paragraph = Paragraph::new(lines).block(block).scroll((self.scroll, 0));
 
         Widget::render(paragraph, area, buf);
     }

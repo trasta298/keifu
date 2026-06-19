@@ -167,18 +167,20 @@ in the Ghostty config works around it.
 | `y` | Copy commit hash to clipboard (OSC 52) |
 | `Y` | Copy branch name to clipboard (OSC 52) |
 | `R` | Refresh repository data |
+| `o` | Toggle remote branches |
 | `?` | Toggle help |
 | `q` / `Esc` | Quit (returns focus to the graph first when the detail pane is focused) |
 
 ## Notes and limitations
 
-- The TUI loads up to 500 commits across all branches.
+- The TUI loads up to 500 commits across the visible branches.
 - Merge commits are diffed against the first parent; the initial commit is diffed against an empty tree.
 - Changed files are capped at 50. Binary files are shown without line stats.
 - If there are staged, unstaged, or untracked changes, an "uncommitted changes" row appears at the top.
 - When multiple branches point to the same commit, the label is collapsed to a single name with a `+N` suffix (e.g., `main +2`). Use `h`/`l` or `←`/`→` to switch between them.
 - Checking out `origin/xxx` creates or updates a local branch. Upstream is set only when creating a new branch. If the local branch exists but points to a different commit, it is force-updated to match the remote.
-- Remote branches are displayed, but delete operations only work with local branches.
+- Remote branches are displayed by default. Press `o` to hide them; when hidden, commits reachable only from remote branches are excluded from the graph.
+- Delete operations only work with local branches.
 - Fetch and push require the `origin` remote to be configured. Staging works per file (no hunk-level staging); commits include only staged changes, like plain `git commit`.
 
 ## License

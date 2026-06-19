@@ -13,7 +13,7 @@ pub struct BranchInfo {
 }
 
 impl BranchInfo {
-    pub fn list_all(repo: &Repository) -> Result<Vec<Self>> {
+    pub fn list_all(repo: &Repository, include_remotes: bool) -> Result<Vec<Self>> {
         let mut branches = Vec::new();
 
         // Get HEAD
@@ -48,19 +48,21 @@ impl BranchInfo {
             }
         }
 
-        // Remote branches
-        for branch_result in repo.branches(Some(BranchType::Remote))? {
-            let (branch, _) = branch_result?;
-            if let Some(name) = branch.name()? {
-                let reference = branch.get();
-                if let Some(oid) = reference.target() {
-                    branches.push(BranchInfo {
-                        name: name.to_string(),
-                        is_head: false,
-                        is_remote: true,
-                        upstream: None,
-                        tip_oid: oid,
-                    });
+        if include_remotes {
+            // Remote branches
+            for branch_result in repo.branches(Some(BranchType::Remote))? {
+                let (branch, _) = branch_result?;
+                if let Some(name) = branch.name()? {
+                    let reference = branch.get();
+                    if let Some(oid) = reference.target() {
+                        branches.push(BranchInfo {
+                            name: name.to_string(),
+                            is_head: false,
+                            is_remote: true,
+                            upstream: None,
+                            tip_oid: oid,
+                        });
+                    }
                 }
             }
         }

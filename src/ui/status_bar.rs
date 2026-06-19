@@ -70,6 +70,16 @@ impl StatusBar {
             ));
             prefix.push(Span::raw(" "));
         }
+        if !app.show_remote_branches() {
+            prefix.push(Span::styled(
+                " remotes hidden ",
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            prefix.push(Span::raw(" "));
+        }
 
         let mut hints: Vec<Hint> = Vec::new();
         let mut mode_label = None;
@@ -108,6 +118,7 @@ impl StatusBar {
             }
             AppMode::Help => {
                 mode_label = Some(" HELP ");
+                hints.push(Hint::new("j/k", "scroll", None));
                 hints.push(Hint::new("Esc/q", "close help", Some(Action::ToggleHelp)));
             }
             AppMode::Input { action, .. } => {

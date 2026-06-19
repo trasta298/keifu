@@ -259,7 +259,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match &app.mode {
         AppMode::Help => {
             let popup_area = centered_rect(60, 70, area);
-            frame.render_widget(HelpPopup, popup_area);
+            let viewport_height = popup_area.height.saturating_sub(2) as usize;
+            let line_count = HelpPopup::line_count();
+            let max_scroll = line_count.saturating_sub(viewport_height) as u16;
+            app.help_scroll = app.help_scroll.min(max_scroll);
+            frame.render_widget(HelpPopup::new(app.help_scroll), popup_area);
+            render_scrollbar(
+                frame,
+                popup_area,
+                line_count,
+                viewport_height,
+                app.help_scroll as usize,
+            );
         }
         AppMode::Input {
             input,

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use git2::{Repository, Status};
+use git2::{BranchType, Repository, Status};
 
 use git2::Oid;
 
@@ -58,12 +58,17 @@ impl GitRepository {
     }
 
     /// Get commit history (newest first)
-    pub fn get_commits(&self, max_count: usize) -> Result<Vec<CommitInfo>> {
+    pub fn get_commits(&self, max_count: usize, include_remotes: bool) -> Result<Vec<CommitInfo>> {
         let mut revwalk = self.repo.revwalk()?;
         revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 
-        // Include all branches
-        for branch_result in self.repo.branches(None)? {
+        let branch_filter = if include_remotes {
+            None
+        } else {
+            Some(BranchType::Local)
+        };
+
+        for branch_result in self.repo.branches(branch_filter)? {
             let (branch, _) = branch_result?;
             if let Some(oid) = branch.get().target() {
                 revwalk.push(oid)?;
@@ -81,8 +86,8 @@ impl GitRepository {
     }
 
     /// Get branch list
-    pub fn get_branches(&self) -> Result<Vec<BranchInfo>> {
-        BranchInfo::list_all(&self.repo)
+    pub fn get_branches(&self, include_remotes: bool) -> Result<Vec<BranchInfo>> {
+        BranchInfo::list_all(&self.repo, include_remotes)
     }
 
     /// Get the current HEAD name
