@@ -17,6 +17,28 @@ use crate::{
 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
 
+const ROW_SELECTION_BG: Color = Color::Rgb(40, 44, 62);
+
+fn with_row_selection(style: Style, is_row_selected: bool) -> Style {
+    if is_row_selected {
+        style.bg(ROW_SELECTION_BG)
+    } else {
+        style
+    }
+}
+
+fn row_space(count: usize, is_row_selected: bool) -> Span<'static> {
+    if count == 0 {
+        return Span::raw(String::new());
+    }
+    let text = " ".repeat(count);
+    if is_row_selected {
+        Span::styled(text, Style::default().bg(ROW_SELECTION_BG))
+    } else {
+        Span::raw(text)
+    }
+}
+
 /// VS16 (U+FE0F) variation selector for emoji presentation
 const VS16: char = '\u{FE0F}';
 
@@ -113,6 +135,7 @@ fn optimize_branch_display(
     is_head: bool,
     color_index: usize,
     selected_branch_name: Option<&str>,
+    is_row_selected: bool,
 ) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
@@ -148,6 +171,8 @@ fn optimize_branch_display(
         let style = Style::default().fg(base_color).add_modifier(Modifier::BOLD);
         if selected_branch_name == Some(branch_name) {
             style.fg(Color::Black).bg(base_color)
+        } else if is_row_selected {
+            with_row_selection(style, true)
         } else {
             style
         }
@@ -336,7 +361,10 @@ fn render_graph_line<'a>(
 
     // Graph start marker; accent bar makes the selected row easy to spot
     if is_selected {
-        spans.push(Span::styled("▌", Style::default().fg(Color::Cyan)));
+        spans.push(Span::styled(
+            "▌",
+            with_row_selection(Style::default().fg(Color::Cyan), true),
+        ));
     } else {
         spans.push(Span::raw(" "));
     }
@@ -374,7 +402,10 @@ fn render_graph_line<'a>(
         };
 
         // Draw all line glyphs in bold
-        let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+        let style = with_row_selection(
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+            is_selected,
+        );
 
         let ch_str = ch.to_string();
         let ch_width = display_width(&ch_str);
@@ -387,12 +418,12 @@ fn render_graph_line<'a>(
     if left_width < graph_display_width + 1 {
         // +1 accounts for the start marker
         let padding = graph_display_width + 1 - left_width;
-        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(row_space(padding, is_selected));
         left_width += padding;
     }
 
     // Separator between graph and commit info
-    spans.push(Span::raw(" "));
+    spans.push(row_space(1, is_selected));
     left_width += 1;
 
     // Handle uncommitted changes row
@@ -401,7 +432,10 @@ fn render_graph_line<'a>(
             Some(count) => format!("uncommitted changes ({})", count),
             None => "uncommitted changes".to_string(),
         };
-        let style = Style::default().fg(Color::White);
+        let style = with_row_selection(
+            Style::default().fg(Color::Rgb(192, 202, 245)),
+            is_selected,
+        );
         spans.push(Span::styled(text, style));
         return Line::from(spans);
     }
@@ -413,11 +447,37 @@ fn render_graph_line<'a>(
     };
 
     // Style definitions
-    let hash_style = Style::default().fg(Color::Yellow);
-    let author_style = Style::default().fg(Color::Cyan);
-    let date_style = Style::default().fg(Color::DarkGray);
+    let hash_style = with_row_selection(
+        Style::default().fg(if is_selected {
+            Color::Rgb(224, 175, 104)
+        } else {
+            Color::Yellow
+        }),
+        is_selected,
+    );
+    let author_style = with_row_selection(
+        Style::default().fg(if is_selected {
+            Color::Rgb(125, 207, 255)
+        } else {
+            Color::Cyan
+        }),
+        is_selected,
+    );
+    let date_style = with_row_selection(
+        Style::default().fg(if is_selected {
+            Color::Rgb(154, 162, 180)
+        } else {
+            Color::DarkGray
+        }),
+        is_selected,
+    );
     let msg_style = if is_selected {
-        Style::default().add_modifier(Modifier::BOLD)
+        with_row_selection(
+            Style::default()
+                .fg(Color::Rgb(192, 202, 245))
+                .add_modifier(Modifier::BOLD),
+            true,
+        )
     } else {
         Style::default()
     };
@@ -430,6 +490,7 @@ fn render_graph_line<'a>(
         node.is_head,
         node.color_index,
         selected_branch_name,
+        is_selected,
     );
 
     // === Right-aligned: date author hash (fixed width) ===
@@ -458,14 +519,14 @@ fn render_graph_line<'a>(
     // Render branch labels
     for (i, (label, style)) in branch_display.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw(" "));
+            spans.push(row_space(1, is_selected));
             left_width += 1;
         }
         left_width += display_width(label);
         spans.push(Span::styled(label.clone(), *style));
     }
     if !branch_display.is_empty() {
-        spans.push(Span::raw(" "));
+        spans.push(row_space(1, is_selected));
         left_width += 1;
     }
 
@@ -483,24 +544,24 @@ fn render_graph_line<'a>(
         .saturating_sub(left_width)
         .saturating_sub(right_width);
     if padding > 0 {
-        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(row_space(padding, is_selected));
     }
 
     // === Append right-aligned block (display: date, author, hash) ===
     if show_date {
-        spans.push(Span::raw(" "));
+        spans.push(row_space(1, is_selected));
         spans.push(Span::styled(date, date_style));
     }
     if show_author {
-        spans.push(Span::raw("  "));
+        spans.push(row_space(2, is_selected));
         spans.push(Span::styled(author_formatted, author_style));
     }
     if show_hash {
-        spans.push(Span::raw("  "));
+        spans.push(row_space(2, is_selected));
         spans.push(Span::styled(hash_formatted, hash_style));
     }
     if show_date || show_author || show_hash {
-        spans.push(Span::raw(" "));
+        spans.push(row_space(1, is_selected));
     }
 
     Line::from(spans)
@@ -518,13 +579,7 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
         let title = format!("Commits {}/{}", self.position.0, self.position.1);
         let block = super::pane_block(&title, self.focused);
 
-        let highlight_style = Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD);
-
-        let list = List::new(self.items)
-            .block(block)
-            .highlight_style(highlight_style);
+        let list = List::new(self.items).block(block);
 
         StatefulWidget::render(list, area, buf, state);
     }
