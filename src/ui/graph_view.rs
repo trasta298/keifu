@@ -432,10 +432,7 @@ fn render_graph_line<'a>(
             Some(count) => format!("uncommitted changes ({})", count),
             None => "uncommitted changes".to_string(),
         };
-        let style = with_row_selection(
-            Style::default().fg(Color::Rgb(192, 202, 245)),
-            is_selected,
-        );
+        let style = with_row_selection(Style::default().fg(Color::Rgb(192, 202, 245)), is_selected);
         spans.push(Span::styled(text, style));
         return Line::from(spans);
     }

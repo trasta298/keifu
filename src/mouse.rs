@@ -55,6 +55,14 @@ fn handle_scroll(app: &mut App, delta: i32, x: u16, y: u16) {
                 dispatch(app, action.clone());
             }
         }
+        AppMode::Help => {
+            let action = if delta > 0 {
+                Action::ScrollDown
+            } else {
+                Action::ScrollUp
+            };
+            dispatch(app, action);
+        }
         AppMode::Normal | AppMode::FileSelect { .. } => {
             let layout = app.layout;
             if contains(layout.commit_detail, x, y) {

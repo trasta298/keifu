@@ -92,6 +92,7 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         // UI
         (_, KeyCode::Char('/')) => Some(Action::Search),
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => Some(Action::Refresh),
+        (KeyModifiers::NONE, KeyCode::Char('o')) => Some(Action::ToggleRemoteBranches),
         (_, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             Some(Action::Quit)
@@ -102,8 +103,24 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
 }
 
 fn map_help_mode(key: KeyEvent) -> Option<Action> {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => Some(Action::ToggleHelp),
+    match (key.modifiers, key.code) {
+        (_, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?')) => Some(Action::ToggleHelp),
+        (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
+            Some(Action::ScrollDown)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
+            Some(Action::ScrollUp)
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::ScrollPageDown),
+        (KeyModifiers::CONTROL, KeyCode::Char('u')) => Some(Action::ScrollPageUp),
+        (KeyModifiers::NONE, KeyCode::PageDown) => Some(Action::PageDown),
+        (KeyModifiers::NONE, KeyCode::PageUp) => Some(Action::PageUp),
+        (KeyModifiers::NONE, KeyCode::Char('g')) | (KeyModifiers::NONE, KeyCode::Home) => {
+            Some(Action::ScrollToTop)
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('G')) | (KeyModifiers::NONE, KeyCode::End) => {
+            Some(Action::ScrollToBottom)
+        }
         _ => None,
     }
 }

@@ -21,6 +21,19 @@ auto_fetch = true
 fetch_interval = 60
 ```
 
+## Graph display
+
+By default, keifu shows remote branches and commits that are reachable only from
+remote branches. You can hide them by default:
+
+```toml
+[graph]
+# Show remote branches by default (default: true)
+show_remote_branches = false
+```
+
+Press `o` in the TUI to toggle remote branches for the current session.
+
 ### Options
 
 | Key | Type | Default | Description |
@@ -29,6 +42,7 @@ fetch_interval = 60
 | `refresh_interval` | integer | `10` | Interval in seconds for local refresh (minimum: 1) |
 | `auto_fetch` | bool | `true` | Enable auto-fetch from origin |
 | `fetch_interval` | integer | `60` | Interval in seconds for remote fetch (minimum: 10) |
+| `graph.show_remote_branches` | bool | `true` | Show remote branches and commits reachable only from remote branches |
 
 ### Disabling auto-refresh
 

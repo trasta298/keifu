@@ -210,6 +210,7 @@ pub struct App {
     pub commits: Vec<CommitInfo>,
     pub branches: Vec<BranchInfo>,
     pub graph_layout: GraphLayout,
+    show_remote_branches: bool,
 
     // UI state
     pub graph_list_state: ListState,
@@ -224,6 +225,8 @@ pub struct App {
     pub layout: LayoutMap,
     /// Scroll offset of the changed files pane (updated during render)
     pub files_pane_scroll: u16,
+    /// Scroll offset of the help popup
+    pub help_scroll: u16,
     /// Last mouse click (time, column, row) for double-click detection
     pub last_click: Option<(Instant, u16, u16)>,
     /// Clickable status bar hint regions (updated during render)
@@ -319,8 +322,9 @@ impl App {
         let repo_path = repo.path.clone();
         let head_name = repo.head_name();
 
-        let commits = repo.get_commits(500)?;
-        let branches = repo.get_branches()?;
+        let show_remote_branches = config.graph.show_remote_branches;
+        let commits = repo.get_commits(500, show_remote_branches)?;
+        let branches = repo.get_branches(show_remote_branches)?;
         let (working_tree_status, stage_states, initial_message) =
             Self::working_tree_snapshot(&repo);
         let initial_message_time = initial_message.as_ref().map(|_| now);
@@ -357,6 +361,7 @@ impl App {
             commits,
             branches,
             graph_layout,
+            show_remote_branches,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,
@@ -364,6 +369,7 @@ impl App {
             detail_viewport_height: 0,
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
+            help_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
             perf: PerfStats::default(),
@@ -545,8 +551,8 @@ impl App {
         self.stage_states = stage_states;
 
         let log_started = Instant::now();
-        self.commits = self.repo.get_commits(500)?;
-        self.branches = self.repo.get_branches()?;
+        self.commits = self.repo.get_commits(500, self.show_remote_branches)?;
+        self.branches = self.repo.get_branches(self.show_remote_branches)?;
         self.perf.record("refresh.log", log_started.elapsed());
         let head_commit_oid = self.repo.head_oid();
         let graph_started = Instant::now();
@@ -903,6 +909,11 @@ impl App {
         self.search_state.fuzzy_matches.len()
     }
 
+    /// Whether remote branches are included in the graph.
+    pub fn show_remote_branches(&self) -> bool {
+        self.show_remote_branches
+    }
+
     /// Update diff info for the selected node (commit or uncommitted changes, async)
     pub fn update_diff_cache(&mut self) {
         // Pull in completed results for commit diff
@@ -1155,16 +1166,26 @@ impl App {
                 self.move_branch_right();
             }
             Action::ToggleHelp => {
+                self.help_scroll = 0;
                 self.mode = AppMode::Help;
             }
             Action::Refresh => {
                 self.refresh(true)?;
                 self.reset_timers();
             }
-            Action::Fetch => {
-                if !self.is_fetching() {
-                    self.start_fetch(true, false); // silent=false for manual fetch
-                }
+            Action::ToggleRemoteBranches => {
+                self.show_remote_branches = !self.show_remote_branches;
+                self.refresh(true)?;
+                self.reset_timers();
+                let state = if self.show_remote_branches {
+                    "shown"
+                } else {
+                    "hidden"
+                };
+                self.set_message(format!("Remote branches {state}"));
+            }
+            Action::Fetch if !self.is_fetching() => {
+                self.start_fetch(true, false); // silent=false for manual fetch
             }
             Action::Checkout => {
                 self.do_checkout()?;
@@ -1278,8 +1299,29 @@ impl App {
     }
 
     fn handle_help_action(&mut self, action: Action) {
-        if matches!(action, Action::ToggleHelp | Action::Quit | Action::Cancel) {
-            self.mode = AppMode::Normal;
+        match action {
+            Action::ToggleHelp | Action::Quit | Action::Cancel => {
+                self.mode = AppMode::Normal;
+            }
+            Action::ScrollDown => {
+                self.help_scroll = self.help_scroll.saturating_add(1);
+            }
+            Action::ScrollUp => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+            }
+            Action::ScrollPageDown | Action::PageDown => {
+                self.help_scroll = self.help_scroll.saturating_add(10);
+            }
+            Action::ScrollPageUp | Action::PageUp => {
+                self.help_scroll = self.help_scroll.saturating_sub(10);
+            }
+            Action::ScrollToTop => {
+                self.help_scroll = 0;
+            }
+            Action::ScrollToBottom => {
+                self.help_scroll = u16::MAX;
+            }
+            _ => {}
         }
     }
 
@@ -1302,18 +1344,14 @@ impl App {
         let file_count = file_list.len();
 
         match action {
-            Action::FileSelectUp => {
-                if selected_index > 0 {
-                    if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
-                        *selected_index -= 1;
-                    }
+            Action::FileSelectUp if selected_index > 0 => {
+                if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
+                    *selected_index -= 1;
                 }
             }
-            Action::FileSelectDown => {
-                if selected_index + 1 < file_count {
-                    if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
-                        *selected_index += 1;
-                    }
+            Action::FileSelectDown if selected_index + 1 < file_count => {
+                if let AppMode::FileSelect { selected_index, .. } = &mut self.mode {
+                    *selected_index += 1;
                 }
             }
             Action::OpenFileDiff => {
@@ -2121,10 +2159,19 @@ mod tests {
         oid
     }
 
+    fn commit_without_ref(repo: &Repository, parent_oid: Oid, message: &str) -> Oid {
+        let parent = repo.find_commit(parent_oid).unwrap();
+        let tree = parent.tree().unwrap();
+        let signature = Signature::now("Test User", "test@example.com").unwrap();
+        repo.commit(None, &signature, &signature, message, &tree, &[&parent])
+            .unwrap()
+    }
+
     fn make_app_from_repo(repo: GitRepository) -> App {
         let now = Instant::now();
-        let commits = repo.get_commits(500).unwrap();
-        let branches = repo.get_branches().unwrap();
+        let show_remote_branches = true;
+        let commits = repo.get_commits(500, show_remote_branches).unwrap();
+        let branches = repo.get_branches(show_remote_branches).unwrap();
         let (working_tree_status, stage_states, initial_message) =
             App::working_tree_snapshot(&repo);
         let initial_message_time = initial_message.as_ref().map(|_| now);
@@ -2156,6 +2203,7 @@ mod tests {
             commits,
             branches,
             graph_layout,
+            show_remote_branches,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,
@@ -2163,6 +2211,7 @@ mod tests {
             detail_viewport_height: 0,
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
+            help_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
             perf: PerfStats::default(),
@@ -2232,6 +2281,7 @@ mod tests {
                 nodes: vec![node],
                 max_lane: 0,
             },
+            show_remote_branches: true,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,
@@ -2239,6 +2289,7 @@ mod tests {
             detail_viewport_height: 0,
             layout: LayoutMap::default(),
             files_pane_scroll: 0,
+            help_scroll: 0,
             last_click: None,
             status_hints: Vec::new(),
             perf: PerfStats::default(),
@@ -2371,6 +2422,47 @@ mod tests {
         assert!(!app.uncommitted_diff_loading);
         assert!(app.uncommitted_diff_receiver.is_none());
         assert_eq!(app.message.as_deref(), Some("Failed to load diff: boom"));
+    }
+
+    #[test]
+    fn toggle_remote_branches_hides_remote_only_commits() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(tempdir.path()).unwrap();
+        let local_oid = commit_file(&repo, "tracked.txt", "tracked\n", "initial");
+        let remote_oid = commit_without_ref(&repo, local_oid, "remote only");
+        repo.reference(
+            "refs/remotes/origin/agent-work",
+            remote_oid,
+            true,
+            "test remote branch",
+        )
+        .unwrap();
+
+        let git_repo = GitRepository::open(tempdir.path()).unwrap();
+        let mut app = make_app_from_repo(git_repo);
+        assert!(app.commits.iter().any(|commit| commit.oid == remote_oid));
+        assert!(app
+            .branches
+            .iter()
+            .any(|branch| branch.name == "origin/agent-work"));
+
+        app.handle_action(Action::ToggleRemoteBranches).unwrap();
+
+        assert!(!app.show_remote_branches());
+        assert!(!app.commits.iter().any(|commit| commit.oid == remote_oid));
+        assert!(app.commits.iter().any(|commit| commit.oid == local_oid));
+        assert!(app.branches.iter().all(|branch| !branch.is_remote));
+        assert_eq!(app.message.as_deref(), Some("Remote branches hidden"));
+
+        app.handle_action(Action::ToggleRemoteBranches).unwrap();
+
+        assert!(app.show_remote_branches());
+        assert!(app.commits.iter().any(|commit| commit.oid == remote_oid));
+        assert!(app
+            .branches
+            .iter()
+            .any(|branch| branch.name == "origin/agent-work"));
+        assert_eq!(app.message.as_deref(), Some("Remote branches shown"));
     }
 
     #[test]
