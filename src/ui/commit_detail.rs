@@ -9,13 +9,13 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, AppMode, FocusedPane};
+use crate::app::{App, AppMode, DiffSource, FocusedPane};
 use crate::git::{FileChangeKind, StageState};
 
 use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
 
 /// Human-friendly relative time like "3 days ago"
-fn relative_time(ts: chrono::DateTime<chrono::Local>) -> String {
+pub(crate) fn relative_time(ts: chrono::DateTime<chrono::Local>) -> String {
     let secs = chrono::Local::now().signed_duration_since(ts).num_seconds();
     if secs < 0 {
         return "in the future".to_string();
@@ -177,6 +177,20 @@ impl CommitDetailWidget {
             lines.push(Line::from(spans));
         }
 
+        // Worktrees checked out from branches on this commit
+        for name in &node.branch_names {
+            if let Some(worktree) = app.worktree_for_branch(name) {
+                lines.push(Line::from(vec![
+                    // "Worktree" fills the 8-char label column; keep one space
+                    Self::metadata_label("Worktree"),
+                    Span::styled(
+                        format!(" ⌂ {}", worktree.path.display()),
+                        Style::default().fg(Color::Magenta),
+                    ),
+                ]));
+            }
+        }
+
         lines.push(Line::from(Span::styled(
             " ".to_string() + &"─".repeat(28),
             Style::default().fg(Color::DarkGray),
@@ -276,11 +290,26 @@ impl FileListWidget {
             _ => None,
         };
 
-        let stage_states = app.is_uncommitted_selected().then_some(&app.stage_states);
+        // Branch review shows the precomputed range diff instead of the
+        // selection's diff
+        let review_diff = match &app.mode {
+            AppMode::FileSelect {
+                source: DiffSource::Range { .. },
+                ..
+            } => app.review_diff.as_ref(),
+            _ => None,
+        };
+
+        let stage_states =
+            (review_diff.is_none() && app.is_uncommitted_selected()).then_some(&app.stage_states);
 
         // Prefer cached data (even if stale) over a loading indicator so that
         // auto-refresh doesn't cause the file list to flicker.
-        let Some(diff) = app.cached_diff() else {
+        let diff = if let Some(diff) = review_diff {
+            diff
+        } else if let Some(diff) = app.cached_diff() {
+            diff
+        } else {
             if app.is_diff_loading() {
                 return FileListContent::Loading;
             }

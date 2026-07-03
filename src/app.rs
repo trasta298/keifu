@@ -16,15 +16,15 @@ use crate::{
     action::Action,
     config::Config,
     git::{
-        build_graph,
+        build_graph, collect_triage, default_base_branch,
         graph::GraphLayout,
         operations::{
             checkout_branch, checkout_commit, checkout_remote_branch, create_branch, create_commit,
             delete_branch, fetch_origin, merge_branch, push_branch, rebase_branch, stage_all,
-            stage_path, unstage_all, unstage_path,
+            stage_path, unstage_all, unstage_path, worktree_add, worktree_remove,
         },
-        BranchInfo, CommitDiffInfo, CommitInfo, FileDiffContent, FileDiffInfo, GitRepository,
-        StageState, WorkingTreeStatus,
+        BranchInfo, BranchTriageRow, CommitDiffInfo, CommitInfo, FileDiffContent, FileDiffInfo,
+        GitRepository, StageState, WorkingTreeStatus, WorktreeInfo,
     },
     perf::PerfStats,
     search::{fuzzy_search_branches, FuzzySearchResult},
@@ -74,6 +74,7 @@ pub enum AppMode {
     FileSelect {
         selected_index: usize,
         file_list: Vec<FileDiffInfo>,
+        source: DiffSource,
     },
     FileDiff {
         file_index: usize,
@@ -85,6 +86,26 @@ pub enum AppMode {
         horizontal_offset: usize,
         max_line_width: usize,
         total_lines: usize,
+        source: DiffSource,
+    },
+    BranchList {
+        selected: usize,
+        rows: Vec<BranchTriageRow>,
+        base_name: Option<String>,
+    },
+}
+
+/// Where the diff shown in FileSelect / FileDiff comes from
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffSource {
+    /// Diff of the node selected in the graph (commit or uncommitted changes)
+    Selection,
+    /// Branch review: merge-base..branch tip (`git diff base...branch`)
+    Range {
+        base: Oid,
+        head: Oid,
+        base_name: String,
+        head_name: String,
     },
 }
 
@@ -94,6 +115,7 @@ pub enum InputAction {
     CreateBranch,
     Search,
     CommitMessage,
+    CreateWorktree { branch: String },
 }
 
 /// Focusable panes in Normal mode
@@ -120,6 +142,15 @@ pub enum ConfirmAction {
     Merge(String),
     Rebase(String),
     Push(String),
+    RemoveWorktree {
+        branch: String,
+        path: String,
+        from_list: bool,
+    },
+    /// Delete a branch from the branch list (returns to the list afterwards)
+    DeleteBranchFromList(String),
+    /// Bulk-delete merged branches from the branch list
+    DeleteMergedBranches(Vec<String>),
 }
 
 /// Result of async diff computation
@@ -210,7 +241,13 @@ pub struct App {
     pub commits: Vec<CommitInfo>,
     pub branches: Vec<BranchInfo>,
     pub graph_layout: GraphLayout,
+    pub worktrees: Vec<WorktreeInfo>,
     show_remote_branches: bool,
+
+    /// Diff shown while reviewing a branch (FileSelect/FileDiff with a Range source)
+    pub review_diff: Option<CommitDiffInfo>,
+    /// Scroll offset of the branch list (updated during render, for mouse hit-testing)
+    pub branch_list_scroll: u16,
 
     // UI state
     pub graph_list_state: ListState,
@@ -325,6 +362,7 @@ impl App {
         let show_remote_branches = config.graph.show_remote_branches;
         let commits = repo.get_commits(500, show_remote_branches)?;
         let branches = repo.get_branches(show_remote_branches)?;
+        let worktrees = WorktreeInfo::list_all(&repo.repo).unwrap_or_default();
         let (working_tree_status, stage_states, initial_message) =
             Self::working_tree_snapshot(&repo);
         let initial_message_time = initial_message.as_ref().map(|_| now);
@@ -361,7 +399,10 @@ impl App {
             commits,
             branches,
             graph_layout,
+            worktrees,
             show_remote_branches,
+            review_diff: None,
+            branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,
@@ -553,6 +594,7 @@ impl App {
         let log_started = Instant::now();
         self.commits = self.repo.get_commits(500, self.show_remote_branches)?;
         self.branches = self.repo.get_branches(self.show_remote_branches)?;
+        self.worktrees = WorktreeInfo::list_all(&self.repo.repo).unwrap_or_default();
         self.perf.record("refresh.log", log_started.elapsed());
         let head_commit_oid = self.repo.head_oid();
         let graph_started = Instant::now();
@@ -749,7 +791,9 @@ impl App {
                 self.reset_timers();
                 if matches!(
                     self.mode,
-                    AppMode::FileSelect { .. } | AppMode::FileDiff { .. }
+                    AppMode::FileSelect { .. }
+                        | AppMode::FileDiff { .. }
+                        | AppMode::BranchList { .. }
                 ) {
                     self.pending_refresh = true;
                     self.set_message("Fetched from origin");
@@ -825,7 +869,7 @@ impl App {
         }
         if matches!(
             self.mode,
-            AppMode::FileSelect { .. } | AppMode::FileDiff { .. }
+            AppMode::FileSelect { .. } | AppMode::FileDiff { .. } | AppMode::BranchList { .. }
         ) {
             return;
         }
@@ -1100,6 +1144,7 @@ impl App {
             AppMode::Error { .. } => self.handle_error_action(action),
             AppMode::FileSelect { .. } => self.handle_file_select_action(action)?,
             AppMode::FileDiff { .. } => self.handle_file_diff_action(action)?,
+            AppMode::BranchList { .. } => self.handle_branch_list_action(action)?,
         }
         Ok(())
     }
@@ -1209,13 +1254,37 @@ impl App {
             Action::DeleteBranch => {
                 if let Some(branch) = self.selected_branch() {
                     if !branch.is_head && !branch.is_remote {
-                        self.mode = AppMode::Confirm {
-                            message: format!("Delete branch '{}'?", branch.name),
-                            action: ConfirmAction::DeleteBranch(branch.name.clone()),
-                        };
+                        let name = branch.name.clone();
+                        if let Some(worktree) = self.worktree_for_branch(&name) {
+                            let path = worktree.path.display().to_string();
+                            self.set_message(format!(
+                                "'{}' is checked out in worktree {} (press W to remove it first)",
+                                name, path
+                            ));
+                        } else {
+                            self.mode = AppMode::Confirm {
+                                message: format!("Delete branch '{}'?", name),
+                                action: ConfirmAction::DeleteBranch(name),
+                            };
+                        }
                     }
                 }
             }
+            Action::WorktreeCreate => match self.selected_branch_name().map(|s| s.to_string()) {
+                Some(name) => self.request_worktree_create(&name),
+                None => self.set_message("No branch selected"),
+            },
+            Action::WorktreeRemove => match self.selected_branch_name().map(|s| s.to_string()) {
+                Some(name) => self.request_worktree_remove(&name),
+                None => self.set_message("No branch selected"),
+            },
+            Action::OpenBranchList => {
+                self.enter_branch_list(None);
+            }
+            Action::ReviewBranch => match self.selected_branch_name().map(|s| s.to_string()) {
+                Some(name) => self.start_branch_review(&name),
+                None => self.set_message("No branch selected"),
+            },
             Action::Merge => {
                 if let Some(branch) = self.selected_branch() {
                     if !branch.is_head {
@@ -1245,6 +1314,7 @@ impl App {
                         self.mode = AppMode::FileSelect {
                             selected_index: 0,
                             file_list,
+                            source: DiffSource::Selection,
                         };
                     }
                 } else if self.is_diff_loading() {
@@ -1336,6 +1406,7 @@ impl App {
         let AppMode::FileSelect {
             selected_index,
             file_list,
+            ..
         } = &self.mode
         else {
             return Ok(());
@@ -1355,15 +1426,20 @@ impl App {
                 }
             }
             Action::OpenFileDiff => {
-                let file_list_snapshot = if let AppMode::FileSelect { file_list, .. } = &self.mode {
-                    file_list.clone()
-                } else {
-                    return Ok(());
-                };
+                let (file_list_snapshot, source) =
+                    if let AppMode::FileSelect {
+                        file_list, source, ..
+                    } = &self.mode
+                    {
+                        (file_list.clone(), source.clone())
+                    } else {
+                        return Ok(());
+                    };
 
                 if selected_index < file_list_snapshot.len() {
                     let path = file_list_snapshot[selected_index].path.clone();
-                    if let Err(e) = self.enter_file_diff(selected_index, file_list_snapshot, &path)
+                    if let Err(e) =
+                        self.enter_file_diff(selected_index, file_list_snapshot, &path, source)
                     {
                         self.set_message(format!("Cannot open diff: {e}"));
                     }
@@ -1501,25 +1577,35 @@ impl App {
                 }
             }
             Action::NextFile => {
-                let file_list_snapshot = if let AppMode::FileDiff { file_list, .. } = &self.mode {
-                    file_list.clone()
-                } else {
-                    return Ok(());
-                };
+                let (file_list_snapshot, source) =
+                    if let AppMode::FileDiff {
+                        file_list, source, ..
+                    } = &self.mode
+                    {
+                        (file_list.clone(), source.clone())
+                    } else {
+                        return Ok(());
+                    };
                 if !file_list_snapshot.is_empty() {
                     let new_index = (file_index + 1) % file_list_snapshot.len();
                     let path = file_list_snapshot[new_index].path.clone();
-                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                    if let Err(e) =
+                        self.enter_file_diff(new_index, file_list_snapshot, &path, source)
+                    {
                         self.set_message(format!("Cannot open diff: {e}"));
                     }
                 }
             }
             Action::PrevFile => {
-                let file_list_snapshot = if let AppMode::FileDiff { file_list, .. } = &self.mode {
-                    file_list.clone()
-                } else {
-                    return Ok(());
-                };
+                let (file_list_snapshot, source) =
+                    if let AppMode::FileDiff {
+                        file_list, source, ..
+                    } = &self.mode
+                    {
+                        (file_list.clone(), source.clone())
+                    } else {
+                        return Ok(());
+                    };
                 if !file_list_snapshot.is_empty() {
                     let new_index = if file_index == 0 {
                         file_list_snapshot.len() - 1
@@ -1527,26 +1613,30 @@ impl App {
                         file_index - 1
                     };
                     let path = file_list_snapshot[new_index].path.clone();
-                    if let Err(e) = self.enter_file_diff(new_index, file_list_snapshot, &path) {
+                    if let Err(e) =
+                        self.enter_file_diff(new_index, file_list_snapshot, &path, source)
+                    {
                         self.set_message(format!("Cannot open diff: {e}"));
                     }
                 }
             }
             Action::Cancel | Action::Quit => {
                 // Return to FileSelect with file_index preserved
-                let (file_index, file_list) = if let AppMode::FileDiff {
+                let (file_index, file_list, source) = if let AppMode::FileDiff {
                     file_index,
                     file_list,
+                    source,
                     ..
                 } = &self.mode
                 {
-                    (*file_index, file_list.clone())
+                    (*file_index, file_list.clone(), source.clone())
                 } else {
                     return Ok(());
                 };
                 self.mode = AppMode::FileSelect {
                     selected_index: file_index,
                     file_list,
+                    source,
                 };
             }
             _ => {}
@@ -1559,6 +1649,7 @@ impl App {
         file_index: usize,
         file_list: Vec<FileDiffInfo>,
         file_path: &std::path::Path,
+        source: DiffSource,
     ) -> Result<()> {
         use crate::ui::file_diff_view::build_highlighted_lines;
 
@@ -1566,7 +1657,7 @@ impl App {
         // files, large refactors) this may briefly block input. If this becomes a problem,
         // consider moving to a background task with a loading state, similar to commit diff summaries.
         let started = Instant::now();
-        let content = self.load_file_diff_content(file_path)?;
+        let content = self.load_file_diff_content(file_path, &source)?;
         let (rendered_lines, hunk_positions) = build_highlighted_lines(&content);
         self.perf.record("open_file_diff", started.elapsed());
         let total_lines = rendered_lines.len();
@@ -1582,11 +1673,19 @@ impl App {
             horizontal_offset: 0,
             max_line_width,
             total_lines,
+            source,
         };
         Ok(())
     }
 
-    fn load_file_diff_content(&self, file_path: &std::path::Path) -> Result<FileDiffContent> {
+    fn load_file_diff_content(
+        &self,
+        file_path: &std::path::Path,
+        source: &DiffSource,
+    ) -> Result<FileDiffContent> {
+        if let DiffSource::Range { base, head, .. } = source {
+            return FileDiffContent::from_range(&self.repo.repo, *base, *head, file_path);
+        }
         match self.current_diff_target() {
             Some(DiffTarget::Commit(oid)) => {
                 FileDiffContent::from_commit(&self.repo.repo, oid, file_path)
@@ -1602,6 +1701,20 @@ impl App {
     /// updated so that navigation and display stay consistent.
     fn sync_file_list_with_uncommitted_diff(&mut self) {
         if self.current_diff_target() != Some(DiffTarget::Uncommitted) {
+            return;
+        }
+
+        // A branch review shows a Range diff; never overwrite its file list
+        if matches!(
+            &self.mode,
+            AppMode::FileSelect {
+                source: DiffSource::Range { .. },
+                ..
+            } | AppMode::FileDiff {
+                source: DiffSource::Range { .. },
+                ..
+            }
+        ) {
             return;
         }
 
@@ -1625,6 +1738,7 @@ impl App {
             AppMode::FileSelect {
                 selected_index,
                 file_list,
+                ..
             } => {
                 *file_list = new_files;
                 if *selected_index >= file_list.len() {
@@ -1652,6 +1766,7 @@ impl App {
 
     fn return_to_normal(&mut self) {
         self.mode = AppMode::Normal;
+        self.review_diff = None;
         if self.pending_refresh {
             self.pending_refresh = false;
             if let Err(e) = self.refresh(true) {
@@ -1696,6 +1811,16 @@ impl App {
                         }
                         let oid = create_commit(&self.repo.repo, &message)?;
                         self.set_message(format!("Committed {}", &oid.to_string()[..7]));
+                        self.refresh(true)?;
+                    }
+                    InputAction::CreateWorktree { branch } => {
+                        let path = input.trim().to_string();
+                        if path.is_empty() {
+                            self.set_message("Worktree path is empty");
+                            return Ok(());
+                        }
+                        worktree_add(&self.repo_path, &path, &branch)?;
+                        self.set_message(format!("Created worktree at {}", path));
                         self.refresh(true)?;
                     }
                 }
@@ -1800,12 +1925,65 @@ impl App {
                         self.mode = AppMode::Normal;
                         return Ok(());
                     }
+                    ConfirmAction::RemoveWorktree {
+                        branch,
+                        path,
+                        from_list,
+                    } => {
+                        worktree_remove(&self.repo_path, &path)?;
+                        self.set_message(format!("Removed worktree of '{}'", branch));
+                        if from_list {
+                            self.refresh(true)?;
+                            self.enter_branch_list(None);
+                            return Ok(());
+                        }
+                    }
+                    ConfirmAction::DeleteBranchFromList(name) => {
+                        delete_branch(&self.repo.repo, &name)?;
+                        self.set_message(format!("Deleted branch '{}'", name));
+                        self.refresh(true)?;
+                        self.enter_branch_list(None);
+                        return Ok(());
+                    }
+                    ConfirmAction::DeleteMergedBranches(names) => {
+                        let mut deleted = 0usize;
+                        let mut failed: Vec<String> = Vec::new();
+                        for name in &names {
+                            match delete_branch(&self.repo.repo, name) {
+                                Ok(()) => deleted += 1,
+                                Err(_) => failed.push(name.clone()),
+                            }
+                        }
+                        if failed.is_empty() {
+                            self.set_message(format!("Deleted {} merged branches", deleted));
+                        } else {
+                            self.set_message(format!(
+                                "Deleted {} branches ({} failed: {})",
+                                deleted,
+                                failed.len(),
+                                failed.join(", ")
+                            ));
+                        }
+                        self.refresh(true)?;
+                        self.enter_branch_list(None);
+                        return Ok(());
+                    }
                 }
                 self.refresh(true)?;
                 self.mode = AppMode::Normal;
             }
             Action::Cancel => {
-                self.mode = AppMode::Normal;
+                // Confirmations opened from the branch list return to it
+                match confirm_action {
+                    ConfirmAction::DeleteBranchFromList(name)
+                    | ConfirmAction::RemoveWorktree {
+                        branch: name,
+                        from_list: true,
+                        ..
+                    } => self.enter_branch_list(Some(&name)),
+                    ConfirmAction::DeleteMergedBranches(_) => self.enter_branch_list(None),
+                    _ => self.mode = AppMode::Normal,
+                }
             }
             _ => {}
         }
@@ -1857,6 +2035,7 @@ impl App {
         self.mode = AppMode::FileSelect {
             selected_index: file_idx,
             file_list,
+            source: DiffSource::Selection,
         };
     }
 
@@ -1898,6 +2077,7 @@ impl App {
         let AppMode::FileSelect {
             selected_index,
             file_list,
+            ..
         } = &self.mode
         else {
             return Ok(());
@@ -2081,6 +2261,9 @@ impl App {
     fn do_checkout(&mut self) -> Result<()> {
         if let Some(branch) = self.selected_branch() {
             let branch_name = branch.name.clone();
+            if self.guard_branch_in_worktree(&branch_name) {
+                return Ok(());
+            }
             if branch_name.starts_with("origin/") {
                 // For remote branches, create a local branch and check it out
                 checkout_remote_branch(&self.repo.repo, &branch_name)?;
@@ -2095,6 +2278,282 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Get the worktree that has the given branch checked out, if any
+    pub fn worktree_for_branch(&self, branch_name: &str) -> Option<&WorktreeInfo> {
+        self.worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some(branch_name))
+    }
+
+    /// Show a message and return true when the branch lives in another worktree
+    /// (git2 does not enforce the CLI's "already checked out elsewhere" rule)
+    fn guard_branch_in_worktree(&mut self, branch_name: &str) -> bool {
+        let Some(worktree) = self.worktree_for_branch(branch_name) else {
+            return false;
+        };
+        let path = worktree.path.display().to_string();
+        self.set_message(format!(
+            "'{}' is checked out in worktree {}",
+            branch_name, path
+        ));
+        true
+    }
+
+    /// Suggested worktree path: a sibling directory of the repository
+    fn default_worktree_path(&self, branch_name: &str) -> String {
+        let repo_dir = std::path::Path::new(&self.repo_path);
+        let dir_name = repo_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "worktree".to_string());
+        let sanitized = branch_name.replace('/', "-");
+        repo_dir
+            .parent()
+            .unwrap_or(repo_dir)
+            .join(format!("{}-{}", dir_name, sanitized))
+            .display()
+            .to_string()
+    }
+
+    /// Open the worktree path input for the given branch (key: w)
+    fn request_worktree_create(&mut self, branch_name: &str) {
+        if branch_name.starts_with("origin/") {
+            self.set_message("Cannot create a worktree for a remote branch");
+            return;
+        }
+        if self.head_name.as_deref() == Some(branch_name) {
+            self.set_message(format!("'{}' is already checked out here", branch_name));
+            return;
+        }
+        if let Some(worktree) = self.worktree_for_branch(branch_name) {
+            let path = worktree.path.display().to_string();
+            self.set_message(format!(
+                "'{}' already has a worktree at {}",
+                branch_name, path
+            ));
+            return;
+        }
+        self.mode = AppMode::Input {
+            title: format!("Worktree path for '{}'", branch_name),
+            input: self.default_worktree_path(branch_name),
+            action: InputAction::CreateWorktree {
+                branch: branch_name.to_string(),
+            },
+        };
+    }
+
+    /// Open the remove-worktree confirmation for the given branch (key: W)
+    fn request_worktree_remove(&mut self, branch_name: &str) {
+        let from_list = matches!(self.mode, AppMode::BranchList { .. });
+        let Some(worktree) = self.worktree_for_branch(branch_name) else {
+            self.set_message(format!("No worktree for '{}'", branch_name));
+            return;
+        };
+        let path = worktree.path.display().to_string();
+        self.mode = AppMode::Confirm {
+            message: format!("Remove worktree at {}?", path),
+            action: ConfirmAction::RemoveWorktree {
+                branch: branch_name.to_string(),
+                path,
+                from_list,
+            },
+        };
+    }
+
+    /// Open the branch triage list (key: B), optionally selecting a branch
+    fn enter_branch_list(&mut self, select: Option<&str>) {
+        match collect_triage(&self.repo.repo, &self.worktrees) {
+            Ok((base_name, rows)) => {
+                let selected = select
+                    .and_then(|name| rows.iter().position(|row| row.name == name))
+                    .unwrap_or(0);
+                self.branch_list_scroll = 0;
+                self.mode = AppMode::BranchList {
+                    selected,
+                    rows,
+                    base_name,
+                };
+            }
+            Err(e) => self.show_error(format!("Failed to list branches: {e}")),
+        }
+    }
+
+    /// Start reviewing a branch against the base branch (key: v):
+    /// shows the diff merge-base..branch, i.e. `git diff base...branch`
+    fn start_branch_review(&mut self, branch_name: &str) {
+        let repo = &self.repo.repo;
+        let Some((base_name, base_oid)) = default_base_branch(repo) else {
+            self.set_message("No base branch found (main/master)");
+            return;
+        };
+        if branch_name == base_name {
+            self.set_message(format!("'{}' is the base branch itself", branch_name));
+            return;
+        }
+        let Some(head_oid) = self
+            .branches
+            .iter()
+            .find(|b| b.name == branch_name)
+            .map(|b| b.tip_oid)
+        else {
+            self.set_message(format!("Branch '{}' not found", branch_name));
+            return;
+        };
+
+        let merge_base = match repo.merge_base(base_oid, head_oid) {
+            Ok(oid) => oid,
+            Err(e) => {
+                self.set_message(format!("No merge base with {}: {}", base_name, e));
+                return;
+            }
+        };
+        let diff = match CommitDiffInfo::from_range(repo, merge_base, head_oid) {
+            Ok(diff) => diff,
+            Err(e) => {
+                self.show_error(format!("Failed to compute branch diff: {e}"));
+                return;
+            }
+        };
+        if diff.files.is_empty() {
+            self.set_message(format!(
+                "No changes between {} and {}",
+                base_name, branch_name
+            ));
+            return;
+        }
+
+        // Keep the graph cursor in sync with the branch under review
+        if let Some(pos) = self
+            .branch_positions
+            .iter()
+            .position(|(_, name)| name == branch_name)
+        {
+            self.selected_branch_position = Some(pos);
+            if let Some((node_idx, _)) = self.branch_positions.get(pos) {
+                self.graph_list_state.select(Some(*node_idx));
+            }
+        }
+
+        let file_list = diff.files.clone();
+        self.review_diff = Some(diff);
+        self.mode = AppMode::FileSelect {
+            selected_index: 0,
+            file_list,
+            source: DiffSource::Range {
+                base: merge_base,
+                head: head_oid,
+                base_name,
+                head_name: branch_name.to_string(),
+            },
+        };
+    }
+
+    /// Handle actions in the branch list mode
+    fn handle_branch_list_action(&mut self, action: Action) -> Result<()> {
+        let AppMode::BranchList { selected, rows, .. } = &self.mode else {
+            return Ok(());
+        };
+        let selected = *selected;
+        let rows = rows.clone();
+        let selected_row = rows.get(selected).cloned();
+
+        match action {
+            Action::MoveDown => self.branch_list_move(selected + 1),
+            Action::MoveUp => self.branch_list_move(selected.saturating_sub(1)),
+            Action::PageDown => self.branch_list_move(selected + 10),
+            Action::PageUp => self.branch_list_move(selected.saturating_sub(10)),
+            Action::GoToTop => self.branch_list_move(0),
+            Action::GoToBottom => self.branch_list_move(usize::MAX),
+            Action::Checkout => {
+                let Some(row) = selected_row else {
+                    return Ok(());
+                };
+                if row.is_head {
+                    self.set_message(format!("'{}' is already checked out", row.name));
+                } else if !self.guard_branch_in_worktree(&row.name) {
+                    checkout_branch(&self.repo.repo, &row.name)?;
+                    self.set_message(format!("Checked out '{}'", row.name));
+                    self.refresh(true)?;
+                    self.enter_branch_list(Some(&row.name));
+                }
+            }
+            Action::DeleteBranch => {
+                let Some(row) = selected_row else {
+                    return Ok(());
+                };
+                if row.is_head {
+                    self.set_message("Cannot delete the current branch");
+                } else if let Some(path) = &row.worktree_path {
+                    self.set_message(format!(
+                        "'{}' is checked out in worktree {} (press W to remove it first)",
+                        row.name,
+                        path.display()
+                    ));
+                } else {
+                    let mut message = format!("Delete branch '{}'?", row.name);
+                    if !row.merged {
+                        message = format!(
+                            "Delete branch '{}'? (NOT merged: {} commits ahead)",
+                            row.name, row.ahead
+                        );
+                    }
+                    self.mode = AppMode::Confirm {
+                        message,
+                        action: ConfirmAction::DeleteBranchFromList(row.name),
+                    };
+                }
+            }
+            Action::DeleteMergedBranches => {
+                let names: Vec<String> = rows
+                    .iter()
+                    .filter(|row| {
+                        row.merged && !row.is_head && !row.is_base && row.worktree_path.is_none()
+                    })
+                    .map(|row| row.name.clone())
+                    .collect();
+                if names.is_empty() {
+                    self.set_message("No merged branches to delete");
+                } else {
+                    self.mode = AppMode::Confirm {
+                        message: format!(
+                            "Delete {} merged branches? ({})",
+                            names.len(),
+                            names.join(", ")
+                        ),
+                        action: ConfirmAction::DeleteMergedBranches(names),
+                    };
+                }
+            }
+            Action::ReviewBranch => {
+                if let Some(row) = selected_row {
+                    self.start_branch_review(&row.name);
+                }
+            }
+            Action::WorktreeCreate => {
+                if let Some(row) = selected_row {
+                    self.request_worktree_create(&row.name);
+                }
+            }
+            Action::WorktreeRemove => {
+                if let Some(row) = selected_row {
+                    self.request_worktree_remove(&row.name);
+                }
+            }
+            Action::Cancel | Action::Quit => {
+                self.return_to_normal();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Move the branch list selection to the given index (clamped)
+    pub fn branch_list_move(&mut self, target: usize) {
+        if let AppMode::BranchList { selected, rows, .. } = &mut self.mode {
+            *selected = target.min(rows.len().saturating_sub(1));
+        }
     }
 
     /// Build a flat list of (node_index, branch_name) for all branches
@@ -2203,7 +2662,10 @@ mod tests {
             commits,
             branches,
             graph_layout,
+            worktrees: Vec::new(),
             show_remote_branches,
+            review_diff: None,
+            branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,
@@ -2281,7 +2743,10 @@ mod tests {
                 nodes: vec![node],
                 max_lane: 0,
             },
+            worktrees: Vec::new(),
             show_remote_branches: true,
+            review_diff: None,
+            branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),
             detail_scroll: 0,

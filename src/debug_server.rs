@@ -184,6 +184,7 @@ fn state_json(app: &App) -> Value {
         AppMode::Error { .. } => "error",
         AppMode::FileSelect { .. } => "file_select",
         AppMode::FileDiff { .. } => "file_diff",
+        AppMode::BranchList { .. } => "branch_list",
     };
     let focused = match app.focused_pane {
         FocusedPane::Graph => "graph",

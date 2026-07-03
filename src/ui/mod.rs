@@ -1,5 +1,6 @@
 //! UI components
 
+pub mod branch_list;
 pub mod commit_detail;
 pub mod dialog;
 pub mod file_diff_view;
@@ -23,6 +24,7 @@ use ratatui::{
 use crate::app::{App, AppMode, InputAction};
 
 use self::{
+    branch_list::BranchListWidget,
     commit_detail::{CommitDetailWidget, FileListWidget},
     dialog::{BranchInfoPopup, ConfirmDialog, InputDialog},
     file_diff_view::FileDiffViewWidget,
@@ -182,6 +184,46 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.layout.status_bar = vertical[1];
         let status_bar = StatusBar::new(app);
         app.status_hints = status_bar.hint_regions(vertical[1]);
+        frame.render_widget(status_bar, vertical[1]);
+        return;
+    }
+
+    // BranchList mode: full-screen branch triage view
+    if let AppMode::BranchList { selected, rows, .. } = &app.mode {
+        let (selected, row_count) = (*selected, rows.len());
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+
+        let scroll = branch_list::scroll_offset(selected, row_count, vertical[0]);
+        app.branch_list_scroll = scroll;
+        // Record the list area for mouse hit-testing (reuses the graph slot)
+        app.layout.graph = vertical[0];
+        app.layout.status_bar = vertical[1];
+
+        let status_bar = StatusBar::new(app);
+        app.status_hints = status_bar.hint_regions(vertical[1]);
+
+        if let AppMode::BranchList {
+            selected,
+            rows,
+            base_name,
+        } = &app.mode
+        {
+            frame.render_widget(
+                BranchListWidget::new(rows, *selected, base_name.as_deref(), scroll),
+                vertical[0],
+            );
+        }
+        render_scrollbar(
+            frame,
+            vertical[0],
+            row_count,
+            vertical[0].height.saturating_sub(2) as usize,
+            scroll as usize,
+        );
+
         frame.render_widget(status_bar, vertical[1]);
         return;
     }

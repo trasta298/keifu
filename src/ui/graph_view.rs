@@ -91,6 +91,13 @@ impl<'a> GraphViewWidget<'a> {
         // Get the currently selected branch name
         let selected_branch_name = app.selected_branch_name();
 
+        // Branches checked out in linked worktrees (shown with a ⌂ marker)
+        let worktree_branches: std::collections::HashSet<&str> = app
+            .worktrees
+            .iter()
+            .filter_map(|w| w.branch.as_deref())
+            .collect();
+
         let items: Vec<ListItem> = app
             .graph_layout
             .nodes
@@ -104,6 +111,7 @@ impl<'a> GraphViewWidget<'a> {
                     is_selected,
                     inner_width,
                     selected_branch_name,
+                    &worktree_branches,
                 );
                 ListItem::new(line)
             })
@@ -136,6 +144,7 @@ fn optimize_branch_display(
     color_index: usize,
     selected_branch_name: Option<&str>,
     is_row_selected: bool,
+    worktree_branches: &std::collections::HashSet<&str>,
 ) -> Vec<(String, Style)> {
     use std::collections::HashSet;
 
@@ -208,14 +217,17 @@ fn optimize_branch_display(
             }
             result.push((make_label(name, None), make_style(name)));
         } else {
-            // Local branch: check for matching remote
+            // Local branch: check for worktree checkout and matching remote
             let remote_name = format!("origin/{}", name);
-            let suffix = if remote_branches.contains(remote_name.as_str()) {
-                Some("↔ origin")
-            } else {
-                None
-            };
-            result.push((make_label(name, suffix), make_style(name)));
+            let mut suffix_parts: Vec<&str> = Vec::new();
+            if worktree_branches.contains(name.as_str()) {
+                suffix_parts.push("⌂");
+            }
+            if remote_branches.contains(remote_name.as_str()) {
+                suffix_parts.push("↔ origin");
+            }
+            let suffix = (!suffix_parts.is_empty()).then(|| suffix_parts.join(" "));
+            result.push((make_label(name, suffix.as_deref()), make_style(name)));
         }
     }
 
@@ -356,6 +368,7 @@ fn render_graph_line<'a>(
     is_selected: bool,
     total_width: usize,
     selected_branch_name: Option<&str>,
+    worktree_branches: &std::collections::HashSet<&str>,
 ) -> Line<'a> {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -488,6 +501,7 @@ fn render_graph_line<'a>(
         node.color_index,
         selected_branch_name,
         is_selected,
+        worktree_branches,
     );
 
     // === Right-aligned: date author hash (fixed width) ===

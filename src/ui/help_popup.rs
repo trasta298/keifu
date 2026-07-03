@@ -111,6 +111,24 @@ fn help_lines() -> Vec<Line<'static>> {
             Span::styled("  p          ", key_style),
             Span::styled("Push current branch to origin", desc_style),
         ]),
+        Line::from(""),
+        Line::from(Span::styled("Branches / Worktrees", header_style)),
+        Line::from(vec![
+            Span::styled("  B          ", key_style),
+            Span::styled("Branch list (triage / cleanup)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  v          ", key_style),
+            Span::styled("Review branch against base (main)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  w          ", key_style),
+            Span::styled("Create worktree for selected branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  W          ", key_style),
+            Span::styled("Remove worktree of selected branch", desc_style),
+        ]),
         // TODO: merge and rebase will be implemented in the future
         // Line::from(vec![
         //     Span::styled("  m          ", key_style),

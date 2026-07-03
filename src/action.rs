@@ -23,6 +23,15 @@ pub enum Action {
     Merge,
     Rebase,
 
+    // Worktrees
+    WorktreeCreate,
+    WorktreeRemove,
+
+    // Branch triage / review
+    OpenBranchList,
+    DeleteMergedBranches,
+    ReviewBranch,
+
     // Staging / commit / push
     StageToggle,
     StageAll,
