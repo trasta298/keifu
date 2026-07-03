@@ -21,8 +21,10 @@ impl BranchInfo {
     pub fn list_all(repo: &Repository, include_remotes: bool) -> Result<Vec<Self>> {
         let mut branches = Vec::new();
 
-        // Get HEAD
-        let head_oid = repo.head().ok().and_then(|r| r.target());
+        // Resolve HEAD once; the per-branch loop only compares by value
+        let head = repo.head().ok();
+        let head_oid = head.as_ref().and_then(|r| r.target());
+        let head_shorthand = head.as_ref().and_then(|r| r.shorthand());
 
         // Local branches
         for branch_result in repo.branches(Some(BranchType::Local))? {
@@ -30,12 +32,8 @@ impl BranchInfo {
             if let Some(name) = branch.name()? {
                 let reference = branch.get();
                 if let Some(oid) = reference.target() {
-                    let is_head = head_oid.map(|h| h == oid).unwrap_or(false)
-                        && repo
-                            .head()
-                            .ok()
-                            .and_then(|h| h.shorthand().map(|s| s == name))
-                            .unwrap_or(false);
+                    let is_head =
+                        head_oid == Some(oid) && head_shorthand.is_some_and(|h| h == name);
 
                     let upstream = branch
                         .upstream()

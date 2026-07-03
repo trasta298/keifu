@@ -12,9 +12,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::git::BranchTriageRow;
 
 use super::commit_detail::relative_time;
-use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
+use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH, ROW_SELECTION_BG};
 
-const NAME_WIDTH: usize = 28;
+const MIN_NAME_WIDTH: usize = 12;
+const MAX_NAME_WIDTH: usize = 40;
 const STATUS_WIDTH: usize = 12;
 
 /// Scroll offset that keeps the selected row visible
@@ -71,11 +72,25 @@ impl<'a> BranchListWidget<'a> {
         format!("{}…", result)
     }
 
+    /// Name column width fitting the longest branch name, clamped so one
+    /// long name doesn't eat the subject column on narrow terminals
+    fn name_width(&self, inner_width: usize) -> usize {
+        let longest = self
+            .rows
+            .iter()
+            .map(|row| row.name.width())
+            .max()
+            .unwrap_or(MIN_NAME_WIDTH);
+        let max_for_terminal = MAX_NAME_WIDTH.min(inner_width.saturating_sub(STATUS_WIDTH + 6));
+        longest.clamp(MIN_NAME_WIDTH, max_for_terminal.max(MIN_NAME_WIDTH))
+    }
+
     fn build_line(
         &self,
         row: &BranchTriageRow,
         is_selected: bool,
         inner_width: usize,
+        name_width: usize,
     ) -> Line<'static> {
         let mut spans: Vec<Span> = Vec::new();
 
@@ -95,8 +110,8 @@ impl<'a> BranchListWidget<'a> {
         }
 
         // Branch name
-        let name = Self::truncate(&row.name, NAME_WIDTH);
-        let name_pad = NAME_WIDTH.saturating_sub(name.width()) + 1;
+        let name = Self::truncate(&row.name, name_width);
+        let name_pad = name_width.saturating_sub(name.width()) + 1;
         let name_style = if row.is_head {
             Style::default()
                 .fg(Color::Green)
@@ -136,12 +151,12 @@ impl<'a> BranchListWidget<'a> {
             " ".repeat(STATUS_WIDTH.saturating_sub(status_width) + 1),
         ));
 
-        // Right-aligned relative time; subject fills the middle
+        // Right-aligned relative time; subject fills the middle.
+        // On narrow terminals the date is dropped first, then the subject.
         let date = relative_time(row.last_commit);
-        let used: usize = 1 + 2 + NAME_WIDTH + 1 + STATUS_WIDTH + 1;
-        let subject_budget = inner_width
-            .saturating_sub(used)
-            .saturating_sub(date.width() + 2);
+        let used: usize = 1 + 2 + name_width + 1 + STATUS_WIDTH + 1;
+        let remaining = inner_width.saturating_sub(used);
+        let subject_budget = remaining.saturating_sub(date.width() + 2);
         if subject_budget > 4 {
             let subject = Self::truncate(&row.subject, subject_budget);
             let subject_width = subject.width();
@@ -150,11 +165,14 @@ impl<'a> BranchListWidget<'a> {
                 " ".repeat(subject_budget.saturating_sub(subject_width) + 2),
             ));
             spans.push(Span::styled(date, Style::default().fg(Color::DarkGray)));
+        } else if remaining > 4 {
+            let subject = Self::truncate(&row.subject, remaining);
+            spans.push(Span::styled(subject, Style::default().fg(Color::DarkGray)));
         }
 
         let mut line = Line::from(spans);
         if is_selected {
-            line = line.style(Style::default().bg(Color::Rgb(40, 44, 62)));
+            line = line.style(Style::default().bg(ROW_SELECTION_BG));
         }
         line
     }
@@ -174,12 +192,24 @@ impl<'a> Widget for BranchListWidget<'a> {
         let block = super::pane_block(&title, true);
 
         let inner_width = area.width.saturating_sub(2) as usize;
-        let lines: Vec<Line> = self
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(idx, row)| self.build_line(row, idx == self.selected, inner_width))
-            .collect();
+        let name_width = self.name_width(inner_width);
+        let lines: Vec<Line> = if self.rows.is_empty() {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  No local branches.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
+        } else {
+            self.rows
+                .iter()
+                .enumerate()
+                .map(|(idx, row)| {
+                    self.build_line(row, idx == self.selected, inner_width, name_width)
+                })
+                .collect()
+        };
 
         let paragraph = Paragraph::new(lines).block(block).scroll((self.scroll, 0));
         Widget::render(paragraph, area, buf);

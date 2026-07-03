@@ -21,16 +21,15 @@ impl WorktreeInfo {
             let Ok(worktree) = repo.find_worktree(name) else {
                 continue;
             };
-            let branch = Repository::open_from_worktree(&worktree)
-                .ok()
-                .and_then(|wt_repo| {
-                    let head = wt_repo.head().ok()?;
-                    if head.is_branch() {
-                        head.shorthand().map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                });
+            // Read the per-worktree HEAD file directly: this runs on every
+            // auto-refresh, and opening each worktree as a Repository would
+            // re-parse config/odb state just to learn the branch name.
+            let head_path = repo.path().join("worktrees").join(name).join("HEAD");
+            let branch = std::fs::read_to_string(head_path).ok().and_then(|head| {
+                head.trim()
+                    .strip_prefix("ref: refs/heads/")
+                    .map(|s| s.to_string())
+            });
             worktrees.push(WorktreeInfo {
                 name: name.to_string(),
                 path: worktree.path().to_path_buf(),

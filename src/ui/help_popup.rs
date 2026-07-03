@@ -129,6 +129,46 @@ fn help_lines() -> Vec<Line<'static>> {
             Span::styled("  W          ", key_style),
             Span::styled("Remove worktree of selected branch", desc_style),
         ]),
+        Line::from(""),
+        Line::from(Span::styled("Branch List (B)", header_style)),
+        Line::from(vec![
+            Span::styled("  Enter      ", key_style),
+            Span::styled("Checkout selected branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  d          ", key_style),
+            Span::styled("Delete selected branch", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  D          ", key_style),
+            Span::styled("Delete ALL merged branches", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  v / w / W  ", key_style),
+            Span::styled("Review / create / remove worktree", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Esc / B    ", key_style),
+            Span::styled("Close the list", desc_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Diff View", header_style)),
+        Line::from(vec![
+            Span::styled("  n / N      ", key_style),
+            Span::styled("Next / previous file", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  ] / [      ", key_style),
+            Span::styled("Next / previous hunk", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  h / l / 0  ", key_style),
+            Span::styled("Pan horizontally / back to start", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  C-f / C-b  ", key_style),
+            Span::styled("Page down / up", desc_style),
+        ]),
         // TODO: merge and rebase will be implemented in the future
         // Line::from(vec![
         //     Span::styled("  m          ", key_style),

@@ -220,6 +220,9 @@ fn map_branch_list_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::NONE, KeyCode::Char('v')) => Some(Action::ReviewBranch),
         (KeyModifiers::NONE, KeyCode::Char('w')) => Some(Action::WorktreeCreate),
         (KeyModifiers::SHIFT, KeyCode::Char('W')) => Some(Action::WorktreeRemove),
+        // B toggles the list closed
+        (KeyModifiers::SHIFT, KeyCode::Char('B')) => Some(Action::Cancel),
+        (_, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
             Some(Action::Cancel)
         }

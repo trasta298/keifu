@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, StatefulWidget},
+    widgets::{List, ListItem, Widget},
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -15,9 +15,7 @@ use crate::{
     graph::colors::get_color_by_index,
 };
 
-use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH};
-
-const ROW_SELECTION_BG: Color = Color::Rgb(40, 44, 62);
+use super::{render_placeholder_block, MIN_WIDGET_HEIGHT, MIN_WIDGET_WIDTH, ROW_SELECTION_BG};
 
 fn with_row_selection(style: Style, is_row_selected: bool) -> Style {
     if is_row_selected {
@@ -83,10 +81,14 @@ pub struct GraphViewWidget<'a> {
 }
 
 impl<'a> GraphViewWidget<'a> {
-    pub fn new(app: &App, width: u16) -> Self {
+    /// Build list items for the visible window only. The caller must have
+    /// synced the scroll offset (`App::clamp_graph_offset`) beforehand;
+    /// building all ~500 rows every frame dominated the render cost.
+    pub fn new(app: &App, width: u16, height: u16) -> Self {
         let max_lane = app.graph_layout.max_lane;
         // Actual width minus borders
         let inner_width = width.saturating_sub(2) as usize;
+        let viewport = height.saturating_sub(2) as usize;
 
         // Get the currently selected branch name
         let selected_branch_name = app.selected_branch_name();
@@ -98,13 +100,13 @@ impl<'a> GraphViewWidget<'a> {
             .filter_map(|w| w.branch.as_deref())
             .collect();
 
-        let items: Vec<ListItem> = app
-            .graph_layout
-            .nodes
+        let offset = app.graph_list_state.offset();
+        let end = (offset + viewport).min(app.graph_layout.nodes.len());
+        let items: Vec<ListItem> = app.graph_layout.nodes[offset..end]
             .iter()
             .enumerate()
-            .map(|(idx, node)| {
-                let is_selected = app.graph_list_state.selected() == Some(idx);
+            .map(|(i, node)| {
+                let is_selected = app.graph_list_state.selected() == Some(offset + i);
                 let line = render_graph_line(
                     node,
                     max_lane,
@@ -120,9 +122,14 @@ impl<'a> GraphViewWidget<'a> {
         let focused = matches!(app.mode, crate::app::AppMode::Normal)
             && app.focused_pane == crate::app::FocusedPane::Graph;
 
+        let node_count = app.graph_layout.nodes.len();
         let position = (
-            app.graph_list_state.selected().map_or(0, |idx| idx + 1),
-            app.graph_layout.nodes.len(),
+            if node_count == 0 {
+                0
+            } else {
+                app.graph_list_state.selected().map_or(0, |idx| idx + 1)
+            },
+            node_count,
         );
 
         Self {
@@ -578,10 +585,8 @@ fn render_graph_line<'a>(
     Line::from(spans)
 }
 
-impl<'a> StatefulWidget for GraphViewWidget<'a> {
-    type State = ListState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+impl<'a> Widget for GraphViewWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < MIN_WIDGET_WIDTH || area.height < MIN_WIDGET_HEIGHT {
             render_placeholder_block(area, buf);
             return;
@@ -590,8 +595,26 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
         let title = format!("Commits {}/{}", self.position.0, self.position.1);
         let block = super::pane_block(&title, self.focused);
 
+        if self.position.1 == 0 {
+            let placeholder = ratatui::widgets::Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  No commits yet.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled(
+                    "  Edit files, then press Space to stage and 'c' to commit.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ])
+            .block(block);
+            Widget::render(placeholder, area, buf);
+            return;
+        }
+
+        // Items are already windowed to the viewport; render from the top
         let list = List::new(self.items).block(block);
 
-        StatefulWidget::render(list, area, buf, state);
+        Widget::render(list, area, buf);
     }
 }

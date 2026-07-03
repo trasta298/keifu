@@ -30,6 +30,19 @@ use crate::{
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
 
+/// Translate raw git2 checkout errors into actionable messages
+/// (e.g. "class=Checkout (20); code=Conflict (-13)" tells the user nothing)
+fn friendly_checkout_error(err: anyhow::Error) -> anyhow::Error {
+    let is_conflict = err
+        .downcast_ref::<git2::Error>()
+        .is_some_and(|e| e.code() == git2::ErrorCode::Conflict);
+    if is_conflict {
+        anyhow::anyhow!("Checkout failed: uncommitted changes would be overwritten (commit or stash them first)")
+    } else {
+        err
+    }
+}
+
 /// Filter branch names to exclude remote branches that have matching local branches
 /// Returns branches in order: local branches first, then remote-only branches
 fn filter_remote_duplicates(branch_names: &[String]) -> Vec<&str> {
@@ -168,6 +181,9 @@ enum DiffTarget {
 
 type UncommittedDiffResult = (Result<CommitDiffInfo, String>, Option<WorkingTreeStatus>);
 
+/// Result of async branch review diff computation
+type ReviewResult = (DiffSource, Result<CommitDiffInfo, String>);
+
 /// Delay before starting a diff load after selection changes.
 /// Prevents unnecessary computation during fast scrolling.
 const DIFF_LOAD_DEBOUNCE: Duration = Duration::from_millis(120);
@@ -246,6 +262,8 @@ pub struct App {
 
     /// Diff shown while reviewing a branch (FileSelect/FileDiff with a Range source)
     pub review_diff: Option<CommitDiffInfo>,
+    /// In-flight branch review computation (receiver, started at)
+    review_receiver: Option<(Receiver<ReviewResult>, Instant)>,
     /// Scroll offset of the branch list (updated during render, for mouse hit-testing)
     pub branch_list_scroll: u16,
 
@@ -402,6 +420,7 @@ impl App {
             worktrees,
             show_remote_branches,
             review_diff: None,
+            review_receiver: None,
             branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),
@@ -933,8 +952,9 @@ impl App {
     pub fn get_message(&self) -> Option<&str> {
         const MESSAGE_TIMEOUT_SECS: u64 = 5;
 
-        // Don't timeout while fetching or pushing
-        if self.is_fetching() || self.is_pushing() {
+        // Don't timeout while a user-visible async operation is running
+        // (silent auto-fetch must not pin unrelated messages)
+        if (self.is_fetching() && !self.fetch_silent) || self.is_pushing() || self.is_reviewing() {
             return self.message.as_deref();
         }
 
@@ -1152,6 +1172,10 @@ impl App {
     /// Show an error
     pub fn show_error(&mut self, message: String) {
         tracing::warn!(%message, "showing error");
+        // An in-progress status line (e.g. "Pushing...") is stale once the
+        // operation failed; without this it would linger as long as any
+        // async operation keeps message expiry suppressed.
+        self.message = None;
         self.mode = AppMode::Error { message };
     }
 
@@ -2013,6 +2037,27 @@ impl App {
         self.sync_branch_selection_to_node(new);
     }
 
+    /// Keep the graph scroll offset valid and the selection visible.
+    /// The graph view builds items for the visible window only, so the
+    /// offset must be synced before rendering instead of letting the
+    /// List widget adjust it (same scroll-into-view rule as ratatui's List).
+    pub fn clamp_graph_offset(&mut self, viewport: usize) {
+        let len = self.graph_layout.nodes.len();
+        if len == 0 || viewport == 0 {
+            *self.graph_list_state.offset_mut() = 0;
+            return;
+        }
+        let selected = self.graph_list_state.selected().unwrap_or(0).min(len - 1);
+        let mut offset = self.graph_list_state.offset();
+        if selected < offset {
+            offset = selected;
+        } else if selected >= offset + viewport {
+            offset = selected + 1 - viewport;
+        }
+        offset = offset.min(len.saturating_sub(viewport));
+        *self.graph_list_state.offset_mut() = offset;
+    }
+
     /// Select a graph node by absolute index (mouse click)
     pub fn select_node(&mut self, idx: usize) {
         if idx >= self.graph_layout.nodes.len() {
@@ -2264,16 +2309,22 @@ impl App {
             if self.guard_branch_in_worktree(&branch_name) {
                 return Ok(());
             }
-            if branch_name.starts_with("origin/") {
+            let result = if branch_name.starts_with("origin/") {
                 // For remote branches, create a local branch and check it out
-                checkout_remote_branch(&self.repo.repo, &branch_name)?;
+                checkout_remote_branch(&self.repo.repo, &branch_name)
             } else {
-                checkout_branch(&self.repo.repo, &branch_name)?;
-            }
+                checkout_branch(&self.repo.repo, &branch_name)
+            };
+            result.map_err(friendly_checkout_error)?;
+            self.set_message(format!("Checked out '{}'", branch_name));
             self.refresh(true)?;
         } else if let Some(node) = self.selected_commit_node() {
             if let Some(commit) = &node.commit {
-                checkout_commit(&self.repo.repo, commit.oid)?;
+                checkout_commit(&self.repo.repo, commit.oid).map_err(friendly_checkout_error)?;
+                self.set_message(format!(
+                    "Checked out {} (detached HEAD)",
+                    &commit.oid.to_string()[..7]
+                ));
                 self.refresh(true)?;
             }
         }
@@ -2364,7 +2415,10 @@ impl App {
 
     /// Open the branch triage list (key: B), optionally selecting a branch
     fn enter_branch_list(&mut self, select: Option<&str>) {
-        match collect_triage(&self.repo.repo, &self.worktrees) {
+        let started = Instant::now();
+        let triage = collect_triage(&self.repo.repo, &self.worktrees);
+        self.perf.record("branch_list.triage", started.elapsed());
+        match triage {
             Ok((base_name, rows)) => {
                 let selected = select
                     .and_then(|name| rows.iter().position(|row| row.name == name))
@@ -2381,8 +2435,14 @@ impl App {
     }
 
     /// Start reviewing a branch against the base branch (key: v):
-    /// shows the diff merge-base..branch, i.e. `git diff base...branch`
+    /// shows the diff merge-base..branch, i.e. `git diff base...branch`.
+    /// The diff is computed in a background thread (it can be large);
+    /// `update_review_status` opens the file list when it completes.
     fn start_branch_review(&mut self, branch_name: &str) {
+        if self.review_receiver.is_some() {
+            self.set_message("A branch review is already being computed");
+            return;
+        }
         let repo = &self.repo.repo;
         let Some((base_name, base_oid)) = default_base_branch(repo) else {
             self.set_message("No base branch found (main/master)");
@@ -2409,7 +2469,58 @@ impl App {
                 return;
             }
         };
-        let diff = match CommitDiffInfo::from_range(repo, merge_base, head_oid) {
+
+        let source = DiffSource::Range {
+            base: merge_base,
+            head: head_oid,
+            base_name: base_name.clone(),
+            head_name: branch_name.to_string(),
+        };
+        let (tx, rx) = mpsc::channel();
+        let repo_path = self.repo_path.clone();
+        thread::spawn(move || {
+            let diff = git2::Repository::open(&repo_path)
+                .map_err(|e| e.to_string())
+                .and_then(|repo| {
+                    CommitDiffInfo::from_range(&repo, merge_base, head_oid)
+                        .map_err(|e| e.to_string())
+                });
+            let _ = tx.send((source, diff));
+        });
+        self.review_receiver = Some((rx, Instant::now()));
+        self.set_message(format!("Reviewing {}…{}", base_name, branch_name));
+    }
+
+    /// Whether a branch review diff is being computed
+    pub fn is_reviewing(&self) -> bool {
+        self.review_receiver.is_some()
+    }
+
+    /// Check if the async branch review diff has completed and open it
+    pub fn update_review_status(&mut self) {
+        let Some((rx, started)) = &self.review_receiver else {
+            return;
+        };
+        let Ok((source, result)) = rx.try_recv() else {
+            return;
+        };
+        self.perf.record("review.diff", started.elapsed());
+        self.review_receiver = None;
+
+        // A modal dialog opened while computing wins; drop the result
+        if !matches!(self.mode, AppMode::Normal | AppMode::BranchList { .. }) {
+            return;
+        }
+        let DiffSource::Range {
+            ref base_name,
+            ref head_name,
+            ..
+        } = source
+        else {
+            return;
+        };
+
+        let diff = match result {
             Ok(diff) => diff,
             Err(e) => {
                 self.show_error(format!("Failed to compute branch diff: {e}"));
@@ -2419,7 +2530,7 @@ impl App {
         if diff.files.is_empty() {
             self.set_message(format!(
                 "No changes between {} and {}",
-                base_name, branch_name
+                base_name, head_name
             ));
             return;
         }
@@ -2428,7 +2539,7 @@ impl App {
         if let Some(pos) = self
             .branch_positions
             .iter()
-            .position(|(_, name)| name == branch_name)
+            .position(|(_, name)| name == head_name)
         {
             self.selected_branch_position = Some(pos);
             if let Some((node_idx, _)) = self.branch_positions.get(pos) {
@@ -2436,36 +2547,44 @@ impl App {
             }
         }
 
+        self.message = None;
         let file_list = diff.files.clone();
         self.review_diff = Some(diff);
         self.mode = AppMode::FileSelect {
             selected_index: 0,
             file_list,
-            source: DiffSource::Range {
-                base: merge_base,
-                head: head_oid,
-                base_name,
-                head_name: branch_name.to_string(),
-            },
+            source,
         };
     }
 
     /// Handle actions in the branch list mode
     fn handle_branch_list_action(&mut self, action: Action) -> Result<()> {
-        let AppMode::BranchList { selected, rows, .. } = &self.mode else {
+        let AppMode::BranchList { selected, .. } = &self.mode else {
             return Ok(());
         };
         let selected = *selected;
-        let rows = rows.clone();
+
+        // Movement doesn't need row data; skip the clones below
+        let movement_target = match action {
+            Action::MoveDown => Some(selected + 1),
+            Action::MoveUp => Some(selected.saturating_sub(1)),
+            Action::PageDown => Some(selected + 10),
+            Action::PageUp => Some(selected.saturating_sub(10)),
+            Action::GoToTop => Some(0),
+            Action::GoToBottom => Some(usize::MAX),
+            _ => None,
+        };
+        if let Some(target) = movement_target {
+            self.branch_list_move(target);
+            return Ok(());
+        }
+
+        let AppMode::BranchList { rows, .. } = &self.mode else {
+            return Ok(());
+        };
         let selected_row = rows.get(selected).cloned();
 
         match action {
-            Action::MoveDown => self.branch_list_move(selected + 1),
-            Action::MoveUp => self.branch_list_move(selected.saturating_sub(1)),
-            Action::PageDown => self.branch_list_move(selected + 10),
-            Action::PageUp => self.branch_list_move(selected.saturating_sub(10)),
-            Action::GoToTop => self.branch_list_move(0),
-            Action::GoToBottom => self.branch_list_move(usize::MAX),
             Action::Checkout => {
                 let Some(row) = selected_row else {
                     return Ok(());
@@ -2473,7 +2592,7 @@ impl App {
                 if row.is_head {
                     self.set_message(format!("'{}' is already checked out", row.name));
                 } else if !self.guard_branch_in_worktree(&row.name) {
-                    checkout_branch(&self.repo.repo, &row.name)?;
+                    checkout_branch(&self.repo.repo, &row.name).map_err(friendly_checkout_error)?;
                     self.set_message(format!("Checked out '{}'", row.name));
                     self.refresh(true)?;
                     self.enter_branch_list(Some(&row.name));
@@ -2540,6 +2659,10 @@ impl App {
                 if let Some(row) = selected_row {
                     self.request_worktree_remove(&row.name);
                 }
+            }
+            Action::ToggleHelp => {
+                self.help_scroll = 0;
+                self.mode = AppMode::Help;
             }
             Action::Cancel | Action::Quit => {
                 self.return_to_normal();
@@ -2665,6 +2788,7 @@ mod tests {
             worktrees: Vec::new(),
             show_remote_branches,
             review_diff: None,
+            review_receiver: None,
             branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),
@@ -2746,6 +2870,7 @@ mod tests {
             worktrees: Vec::new(),
             show_remote_branches: true,
             review_diff: None,
+            review_receiver: None,
             branch_list_scroll: 0,
             graph_list_state,
             focused_pane: FocusedPane::default(),

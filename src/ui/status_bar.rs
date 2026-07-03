@@ -122,21 +122,25 @@ impl StatusBar {
                 hints.push(Hint::new("j/k", "scroll", None));
                 hints.push(Hint::new("Esc/q", "close help", Some(Action::ToggleHelp)));
             }
-            AppMode::Input { action, .. } => {
+            AppMode::Input { action, input, .. } => {
                 mode_label = Some(" INPUT ");
-                if *action == InputAction::Search {
+                // Match count only once the user typed something; "No matches"
+                // on a green success badge before typing read as a bug
+                if *action == InputAction::Search && !input.is_empty() {
                     let count = app.search_match_count();
-                    let info = if count > 0 {
-                        format!(" {} matches ", count)
+                    let (info, bg) = if count > 0 {
+                        (format!(" {} matches ", count), Color::Green)
                     } else {
-                        " No matches ".to_string()
+                        (" No matches ".to_string(), Color::DarkGray)
+                    };
+                    let fg = if count > 0 {
+                        Color::Black
+                    } else {
+                        Color::White
                     };
                     prefix.push(Span::styled(
                         info,
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
                     ));
                     prefix.push(Span::raw("  "));
                 }
@@ -148,16 +152,9 @@ impl StatusBar {
                 hints.push(Hint::new("y", "yes", Some(Action::Confirm)));
                 hints.push(Hint::new("n", "no", Some(Action::Cancel)));
             }
-            AppMode::Error { message } => {
+            AppMode::Error { .. } => {
+                // The full message is shown in the error dialog
                 mode_label = Some(" ERROR ");
-                prefix.push(Span::styled(
-                    format!(" {} ", message),
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                prefix.push(Span::raw("  "));
                 hints.push(Hint::new("Esc/Enter", "close", Some(Action::Cancel)));
             }
             AppMode::FileSelect { source, .. } => {
@@ -219,11 +216,7 @@ impl StatusBar {
                 hints.push(Hint::new("v", "review", Some(Action::ReviewBranch)));
                 hints.push(Hint::new("w", "worktree", Some(Action::WorktreeCreate)));
                 hints.push(Hint::new("d", "delete", Some(Action::DeleteBranch)));
-                hints.push(Hint::new(
-                    "D",
-                    "prune merged",
-                    Some(Action::DeleteMergedBranches),
-                ));
+                hints.push(Hint::new("D", "prune", Some(Action::DeleteMergedBranches)));
                 hints.push(Hint::new("Esc", "back", Some(Action::Cancel)));
             }
         }
@@ -273,7 +266,14 @@ impl Widget for StatusBar {
             .add_modifier(Modifier::BOLD);
 
         let mut spans = self.prefix.clone();
+        // Drop whole hints that don't fit instead of clipping mid-word
+        // (mirrors the hint_regions loop so clicks match what is shown)
+        let mut used = self.prefix_width();
         for hint in &self.hints {
+            if used + hint.width() > area.width {
+                break;
+            }
+            used += hint.width();
             spans.push(Span::styled(hint.key_text(), key_style));
             spans.push(Span::styled(hint.desc_text(), desc_style));
         }

@@ -261,6 +261,8 @@ pub struct FileListWidget {
     content: FileListContent,
     file_scroll: u16,
     focused: bool,
+    /// Base branch name while reviewing (changes the pane title)
+    review_base: Option<String>,
 }
 
 impl FileListWidget {
@@ -269,10 +271,18 @@ impl FileListWidget {
             AppMode::FileSelect { selected_index, .. } => *selected_index as u16,
             _ => 0,
         };
+        let review_base = match &app.mode {
+            AppMode::FileSelect {
+                source: DiffSource::Range { base_name, .. },
+                ..
+            } => Some(base_name.clone()),
+            _ => None,
+        };
         Self {
             content: Self::build_content(app),
             file_scroll,
             focused: matches!(app.mode, AppMode::FileSelect { .. }),
+            review_base,
         }
     }
 
@@ -402,9 +412,10 @@ impl FileListWidget {
                 let mut lines = Vec::with_capacity(rows.len() + 3);
 
                 // Header row
+                let plural = if header.total_files == 1 { "" } else { "s" };
                 let mut spans = vec![
                     Span::styled(
-                        format!(" {} files changed", header.total_files),
+                        format!(" {} file{} changed", header.total_files, plural),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
@@ -554,9 +565,11 @@ impl Widget for FileListWidget {
             return;
         }
 
-        let title = match self.file_count() {
-            Some(count) => format!("Changed Files ({})", count),
-            None => "Changed Files".to_string(),
+        let title = match (&self.review_base, self.file_count()) {
+            (Some(base), Some(count)) => format!("Review vs {} ({})", base, count),
+            (Some(base), None) => format!("Review vs {}", base),
+            (None, Some(count)) => format!("Changed Files ({})", count),
+            (None, None) => "Changed Files".to_string(),
         };
         let block = super::pane_block(&title, self.focused);
 
