@@ -302,6 +302,39 @@ pub fn push_branch(repo_path: &str, branch: &str) -> Result<()> {
     Ok(())
 }
 
+/// Add a worktree for an existing branch using git command
+/// (the CLI enforces checkout rules like "branch already used elsewhere")
+pub fn worktree_add(repo_path: &str, worktree_path: &str, branch: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["worktree", "add", worktree_path, branch])
+        .current_dir(repo_path)
+        .output()
+        .context("Failed to execute git worktree add")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git worktree add failed: {}", stderr.trim());
+    }
+
+    Ok(())
+}
+
+/// Remove a worktree using git command (refuses when it has local changes)
+pub fn worktree_remove(repo_path: &str, worktree_path: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["worktree", "remove", worktree_path])
+        .current_dir(repo_path)
+        .output()
+        .context("Failed to execute git worktree remove")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git worktree remove failed: {}", stderr.trim());
+    }
+
+    Ok(())
+}
+
 /// Fetch from origin remote using git command
 pub fn fetch_origin(repo_path: &str) -> Result<()> {
     let output = Command::new("git")

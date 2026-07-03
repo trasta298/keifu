@@ -145,6 +145,8 @@ pub fn build_graph(
     let mut lanes: Vec<Option<Oid>> = Vec::new();
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut max_lane: usize = 0;
+    // Commits already emitted as rows (O(1) "already shown" checks)
+    let mut shown_oids: std::collections::HashSet<Oid> = std::collections::HashSet::new();
 
     // Color management
     let mut color_assigner = ColorAssigner::new();
@@ -290,9 +292,7 @@ pub fn build_graph(
                 .position(|l| l.map(|oid| oid == *parent_oid).unwrap_or(false));
 
             // Check if parent commit has already been shown
-            let parent_already_shown = nodes
-                .iter()
-                .any(|n| n.commit.as_ref().map(|c| c.oid) == Some(*parent_oid));
+            let parent_already_shown = shown_oids.contains(parent_oid);
 
             let (parent_lane, was_existing, parent_color) = if let Some(pl) = existing_parent_lane {
                 // If parent is a fork point, treat as fork sibling
@@ -391,6 +391,7 @@ pub fn build_graph(
         let is_head = head_oid.map(|h| h == commit.oid).unwrap_or(false);
 
         // Add commit row
+        shown_oids.insert(commit.oid);
         nodes.push(GraphNode {
             commit: Some(commit.clone()),
             lane,
@@ -414,11 +415,7 @@ pub fn build_graph(
             // Check if the ending lane is tracking a commit that hasn't been shown yet
             let ending_lane_oid = lanes.get(ending_lane).and_then(|o| *o);
             let ending_oid_already_shown = ending_lane_oid
-                .map(|oid| {
-                    nodes
-                        .iter()
-                        .any(|n| n.commit.as_ref().map(|c| c.oid) == Some(oid))
-                })
+                .map(|oid| shown_oids.contains(&oid))
                 .unwrap_or(true);
 
             let continues_down = !ending_oid_already_shown;

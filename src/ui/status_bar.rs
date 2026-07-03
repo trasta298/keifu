@@ -13,7 +13,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::action::Action;
-use crate::app::{App, AppMode, FocusedPane, InputAction};
+use crate::app::{App, AppMode, DiffSource, FocusedPane, InputAction};
 
 struct Hint {
     key: &'static str,
@@ -112,6 +112,7 @@ impl StatusBar {
                     hints.push(Hint::new("Space", "files", Some(Action::EnterFileSelect)));
                     hints.push(Hint::new("c", "commit", Some(Action::CommitDialog)));
                     hints.push(Hint::new("p", "push", Some(Action::Push)));
+                    hints.push(Hint::new("B", "branches", Some(Action::OpenBranchList)));
                     hints.push(Hint::new("?", "help", Some(Action::ToggleHelp)));
                     hints.push(Hint::new("q", "quit", Some(Action::Quit)));
                 }
@@ -121,21 +122,25 @@ impl StatusBar {
                 hints.push(Hint::new("j/k", "scroll", None));
                 hints.push(Hint::new("Esc/q", "close help", Some(Action::ToggleHelp)));
             }
-            AppMode::Input { action, .. } => {
+            AppMode::Input { action, input, .. } => {
                 mode_label = Some(" INPUT ");
-                if *action == InputAction::Search {
+                // Match count only once the user typed something; "No matches"
+                // on a green success badge before typing read as a bug
+                if *action == InputAction::Search && !input.is_empty() {
                     let count = app.search_match_count();
-                    let info = if count > 0 {
-                        format!(" {} matches ", count)
+                    let (info, bg) = if count > 0 {
+                        (format!(" {} matches ", count), Color::Green)
                     } else {
-                        " No matches ".to_string()
+                        (" No matches ".to_string(), Color::DarkGray)
+                    };
+                    let fg = if count > 0 {
+                        Color::Black
+                    } else {
+                        Color::White
                     };
                     prefix.push(Span::styled(
                         info,
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
                     ));
                     prefix.push(Span::raw("  "));
                 }
@@ -147,23 +152,33 @@ impl StatusBar {
                 hints.push(Hint::new("y", "yes", Some(Action::Confirm)));
                 hints.push(Hint::new("n", "no", Some(Action::Cancel)));
             }
-            AppMode::Error { message } => {
+            AppMode::Error { .. } => {
+                // The full message is shown in the error dialog
                 mode_label = Some(" ERROR ");
-                prefix.push(Span::styled(
-                    format!(" {} ", message),
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                prefix.push(Span::raw("  "));
                 hints.push(Hint::new("Esc/Enter", "close", Some(Action::Cancel)));
             }
-            AppMode::FileSelect { .. } => {
-                mode_label = Some(" FILES ");
+            AppMode::FileSelect { source, .. } => {
+                if let DiffSource::Range {
+                    base_name,
+                    head_name,
+                    ..
+                } = source
+                {
+                    mode_label = Some(" REVIEW ");
+                    prefix.push(Span::styled(
+                        format!(" {}…{} ", base_name, head_name),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    prefix.push(Span::raw(" "));
+                } else {
+                    mode_label = Some(" FILES ");
+                }
                 hints.push(Hint::new("j/k", "select", None));
                 hints.push(Hint::new("Enter", "diff", Some(Action::OpenFileDiff)));
-                if app.is_uncommitted_selected() {
+                if matches!(source, DiffSource::Selection) && app.is_uncommitted_selected() {
                     hints.push(Hint::new("s", "stage", Some(Action::StageToggle)));
                     hints.push(Hint::new("a", "all", Some(Action::StageAll)));
                     hints.push(Hint::new("u", "none", Some(Action::UnstageAll)));
@@ -171,12 +186,37 @@ impl StatusBar {
                 }
                 hints.push(Hint::new("Esc", "back", Some(Action::Cancel)));
             }
-            AppMode::FileDiff { .. } => {
+            AppMode::FileDiff { source, .. } => {
                 mode_label = Some(" DIFF ");
+                if let DiffSource::Range {
+                    base_name,
+                    head_name,
+                    ..
+                } = source
+                {
+                    prefix.push(Span::styled(
+                        format!(" {}…{} ", base_name, head_name),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    prefix.push(Span::raw(" "));
+                }
                 hints.push(Hint::new("n/N", "file", Some(Action::NextFile)));
                 hints.push(Hint::new("]/[", "hunk", Some(Action::NextHunk)));
                 hints.push(Hint::new("j/k", "scroll", None));
                 hints.push(Hint::new("h/l", "pan", None));
+                hints.push(Hint::new("Esc", "back", Some(Action::Cancel)));
+            }
+            AppMode::BranchList { .. } => {
+                mode_label = Some(" BRANCHES ");
+                hints.push(Hint::new("j/k", "select", None));
+                hints.push(Hint::new("Enter", "checkout", Some(Action::Checkout)));
+                hints.push(Hint::new("v", "review", Some(Action::ReviewBranch)));
+                hints.push(Hint::new("w", "worktree", Some(Action::WorktreeCreate)));
+                hints.push(Hint::new("d", "delete", Some(Action::DeleteBranch)));
+                hints.push(Hint::new("D", "prune", Some(Action::DeleteMergedBranches)));
                 hints.push(Hint::new("Esc", "back", Some(Action::Cancel)));
             }
         }
@@ -226,7 +266,14 @@ impl Widget for StatusBar {
             .add_modifier(Modifier::BOLD);
 
         let mut spans = self.prefix.clone();
+        // Drop whole hints that don't fit instead of clipping mid-word
+        // (mirrors the hint_regions loop so clicks match what is shown)
+        let mut used = self.prefix_width();
         for hint in &self.hints {
+            if used + hint.width() > area.width {
+                break;
+            }
+            used += hint.width();
             spans.push(Span::styled(hint.key_text(), key_style));
             spans.push(Span::styled(hint.desc_text(), desc_style));
         }

@@ -63,9 +63,10 @@ fn main() -> Result<()> {
         })?;
         app.perf.record("draw", draw_started.elapsed());
 
-        // Check if async fetch/push has completed
+        // Check if async fetch/push/review has completed
         app.update_fetch_status();
         app.update_push_status();
+        app.update_review_status();
 
         // Auto-refresh check
         app.check_auto_refresh();

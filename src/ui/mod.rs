@@ -1,5 +1,6 @@
 //! UI components
 
+pub mod branch_list;
 pub mod commit_detail;
 pub mod dialog;
 pub mod file_diff_view;
@@ -23,6 +24,7 @@ use ratatui::{
 use crate::app::{App, AppMode, InputAction};
 
 use self::{
+    branch_list::BranchListWidget,
     commit_detail::{CommitDetailWidget, FileListWidget},
     dialog::{BranchInfoPopup, ConfirmDialog, InputDialog},
     file_diff_view::FileDiffViewWidget,
@@ -41,8 +43,12 @@ const MIN_HEIGHT: u16 = 6;
 pub const MIN_WIDGET_WIDTH: u16 = 12;
 pub const MIN_WIDGET_HEIGHT: u16 = 3;
 
+/// Background color of the selected row in list-style panes
+pub(crate) const ROW_SELECTION_BG: Color = Color::Rgb(40, 44, 62);
+
 /// Width threshold for switching the detail area to a vertical layout
-const VERTICAL_LAYOUT_THRESHOLD: u16 = 56;
+/// (below this, two side-by-side panes get too cramped to read a hash line)
+const VERTICAL_LAYOUT_THRESHOLD: u16 = 70;
 
 /// Border style for a pane depending on focus
 pub fn pane_border_style(focused: bool) -> Style {
@@ -186,6 +192,46 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    // BranchList mode: full-screen branch triage view
+    if let AppMode::BranchList { selected, rows, .. } = &app.mode {
+        let (selected, row_count) = (*selected, rows.len());
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+
+        let scroll = branch_list::scroll_offset(selected, row_count, vertical[0]);
+        app.branch_list_scroll = scroll;
+        // Record the list area for mouse hit-testing (reuses the graph slot)
+        app.layout.graph = vertical[0];
+        app.layout.status_bar = vertical[1];
+
+        let status_bar = StatusBar::new(app);
+        app.status_hints = status_bar.hint_regions(vertical[1]);
+
+        if let AppMode::BranchList {
+            selected,
+            rows,
+            base_name,
+        } = &app.mode
+        {
+            frame.render_widget(
+                BranchListWidget::new(rows, *selected, base_name.as_deref(), scroll),
+                vertical[0],
+            );
+        }
+        render_scrollbar(
+            frame,
+            vertical[0],
+            row_count,
+            vertical[0].height.saturating_sub(2) as usize,
+            scroll as usize,
+        );
+
+        frame.render_widget(status_bar, vertical[1]);
+        return;
+    }
+
     // Vertical split: main area + status bar (1 row)
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -224,10 +270,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.files_pane_scroll = files_widget.scroll_offset(files_area);
 
     // Render widgets
-    frame.render_stateful_widget(
-        GraphViewWidget::new(app, graph_area.width),
+    app.clamp_graph_offset(graph_area.height.saturating_sub(2) as usize);
+    frame.render_widget(
+        GraphViewWidget::new(app, graph_area.width, graph_area.height),
         graph_area,
-        &mut app.graph_list_state,
     );
     frame.render_widget(commit_widget, commit_area);
     frame.render_widget(files_widget, files_area);
@@ -258,7 +304,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Popups
     match &app.mode {
         AppMode::Help => {
-            let popup_area = centered_rect(60, 70, area);
+            let popup_area = help_rect(area);
             let viewport_height = popup_area.height.saturating_sub(2) as usize;
             let line_count = HelpPopup::line_count();
             let max_scroll = line_count.saturating_sub(viewport_height) as u16;
@@ -292,15 +338,52 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             );
         }
         AppMode::Input { title, input, .. } => {
-            let popup_area = centered_rect(50, 20, area);
+            let popup_area = dialog_rect(50, 6, area);
             frame.render_widget(InputDialog::new(title, input), popup_area);
         }
         AppMode::Confirm { message, .. } => {
-            let popup_area = centered_rect(50, 20, area);
+            let popup_area = dialog_rect(50, 6, area);
             frame.render_widget(ConfirmDialog::new(message), popup_area);
+        }
+        AppMode::Error { message } => {
+            let width_percent = 60;
+            let width = area.width * width_percent / 100;
+            let height = dialog::ErrorDialog::required_height(message, width);
+            let popup_area = dialog_rect(width_percent, height, area);
+            frame.render_widget(dialog::ErrorDialog::new(message), popup_area);
         }
         _ => {}
     }
+}
+
+/// Centered dialog rect with a fixed row height (percentage heights cut off
+/// the y/n hint row on short terminals)
+fn dialog_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let clamped_height = height.min(area.height.saturating_sub(2)).max(3);
+    let y = area.y + (area.height.saturating_sub(clamped_height)) / 2;
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(area);
+
+    Rect::new(horizontal[1].x, y, horizontal[1].width, clamped_height)
+}
+
+/// Help popup rect: percentage-based but clamped to a readable width range
+/// so lines are not truncated on narrow terminals
+fn help_rect(area: Rect) -> Rect {
+    let width = (area.width * 60 / 100)
+        .max(52)
+        .min(area.width.saturating_sub(2));
+    let height = (area.height * 70 / 100).max(12).min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect::new(x, y, width, height)
 }
 
 /// Render branch info popup when multiple branches exist on selected node
@@ -343,27 +426,6 @@ fn render_branch_info_popup(frame: &mut Frame, app: &App, graph_area: Rect) {
         BranchInfoPopup::new(&selected_branches, app.selected_branch_name()),
         popup_area,
     );
-}
-
-/// Calculate a centered rectangle
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 /// Calculate a bottom-aligned rectangle (for dropdowns)

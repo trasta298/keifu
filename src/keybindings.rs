@@ -26,6 +26,7 @@ pub fn map_key_to_action(key: KeyEvent, mode: &AppMode) -> Option<Action> {
         AppMode::Error { .. } => map_error_mode(key),
         AppMode::FileSelect { .. } => map_file_select_mode(key),
         AppMode::FileDiff { .. } => map_file_diff_mode(key),
+        AppMode::BranchList { .. } => map_branch_list_mode(key),
     }
 }
 
@@ -78,6 +79,14 @@ fn map_normal_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::NONE, KeyCode::Char('f')) => Some(Action::Fetch),
         (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::CommitDialog),
         (KeyModifiers::NONE, KeyCode::Char('p')) => Some(Action::Push),
+
+        // Worktrees
+        (KeyModifiers::NONE, KeyCode::Char('w')) => Some(Action::WorktreeCreate),
+        (KeyModifiers::SHIFT, KeyCode::Char('W')) => Some(Action::WorktreeRemove),
+
+        // Branch triage / review
+        (KeyModifiers::SHIFT, KeyCode::Char('B')) => Some(Action::OpenBranchList),
+        (KeyModifiers::NONE, KeyCode::Char('v')) => Some(Action::ReviewBranch),
 
         // Clipboard
         (KeyModifiers::NONE, KeyCode::Char('y')) => Some(Action::CopyHash),
@@ -182,6 +191,38 @@ fn map_file_select_mode(key: KeyEvent) -> Option<Action> {
         (KeyModifiers::NONE, KeyCode::Char('a')) => Some(Action::StageAll),
         (KeyModifiers::NONE, KeyCode::Char('u')) => Some(Action::UnstageAll),
         (KeyModifiers::NONE, KeyCode::Char('c')) => Some(Action::CommitDialog),
+        (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
+            Some(Action::Cancel)
+        }
+        _ => None,
+    }
+}
+
+fn map_branch_list_mode(key: KeyEvent) -> Option<Action> {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
+            Some(Action::MoveDown)
+        }
+        (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
+            Some(Action::MoveUp)
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => Some(Action::PageDown),
+        (KeyModifiers::CONTROL, KeyCode::Char('u')) => Some(Action::PageUp),
+        (KeyModifiers::NONE, KeyCode::Char('g')) | (KeyModifiers::NONE, KeyCode::Home) => {
+            Some(Action::GoToTop)
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('G')) | (KeyModifiers::NONE, KeyCode::End) => {
+            Some(Action::GoToBottom)
+        }
+        (KeyModifiers::NONE, KeyCode::Enter) => Some(Action::Checkout),
+        (KeyModifiers::NONE, KeyCode::Char('d')) => Some(Action::DeleteBranch),
+        (KeyModifiers::SHIFT, KeyCode::Char('D')) => Some(Action::DeleteMergedBranches),
+        (KeyModifiers::NONE, KeyCode::Char('v')) => Some(Action::ReviewBranch),
+        (KeyModifiers::NONE, KeyCode::Char('w')) => Some(Action::WorktreeCreate),
+        (KeyModifiers::SHIFT, KeyCode::Char('W')) => Some(Action::WorktreeRemove),
+        // B toggles the list closed
+        (KeyModifiers::SHIFT, KeyCode::Char('B')) => Some(Action::Cancel),
+        (_, KeyCode::Char('?')) => Some(Action::ToggleHelp),
         (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('q')) => {
             Some(Action::Cancel)
         }

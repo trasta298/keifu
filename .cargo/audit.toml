@@ -1,0 +1,8 @@
+[advisories]
+# quick-xml DoS advisories (patched in >= 0.41.0). keifu cannot upgrade yet:
+# syntect -> plist pins quick-xml < 0.40, and no plist release allows 0.41.
+# Not reachable in keifu: quick-xml is only used by plist to parse
+# .tmLanguage/.tmTheme XML, while keifu loads syntect's bundled binary dumps
+# (SyntaxSet::load_defaults_newlines / ThemeSet::load_defaults) and never
+# parses untrusted XML. Remove once plist allows quick-xml >= 0.41.0.
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]

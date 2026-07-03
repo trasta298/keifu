@@ -149,6 +149,22 @@ impl CommitDiffInfo {
         Self::build_info(Self::scan_diff(&diff)?, None)
     }
 
+    /// Get diff info between two commits (e.g. merge-base..branch tip,
+    /// equivalent to `git diff base...branch`)
+    pub fn from_range(repo: &Repository, old_oid: Oid, new_oid: Oid) -> Result<Self> {
+        let old_tree = repo.find_commit(old_oid)?.tree()?;
+        let new_tree = repo.find_commit(new_oid)?.tree()?;
+
+        let mut opts = DiffOptions::new();
+        opts.minimal(false);
+        opts.ignore_submodules(true);
+        opts.context_lines(0);
+
+        let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), Some(&mut opts))?;
+
+        Self::build_info(Self::scan_diff(&diff)?, None)
+    }
+
     fn scan_diff(diff: &Diff) -> Result<DiffScan> {
         let _ = diff.stats()?;
         let mut files = Vec::with_capacity(diff.deltas().len());
@@ -691,6 +707,27 @@ impl FileDiffContent {
         opts.disable_pathspec_match(true);
 
         let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), Some(&mut opts))?;
+
+        Self::from_diff(&diff, file_path)
+    }
+
+    /// Get full diff content for a single file between two commits
+    pub fn from_range(
+        repo: &Repository,
+        old_oid: Oid,
+        new_oid: Oid,
+        file_path: &Path,
+    ) -> Result<Self> {
+        let old_tree = repo.find_commit(old_oid)?.tree()?;
+        let new_tree = repo.find_commit(new_oid)?.tree()?;
+
+        let mut opts = DiffOptions::new();
+        opts.ignore_submodules(true);
+        opts.context_lines(3);
+        opts.pathspec(file_path);
+        opts.disable_pathspec_match(true);
+
+        let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), Some(&mut opts))?;
 
         Self::from_diff(&diff, file_path)
     }

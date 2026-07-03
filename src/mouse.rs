@@ -63,6 +63,14 @@ fn handle_scroll(app: &mut App, delta: i32, x: u16, y: u16) {
             };
             dispatch(app, action);
         }
+        AppMode::BranchList { .. } => {
+            let action = if delta > 0 {
+                Action::MoveDown
+            } else {
+                Action::MoveUp
+            };
+            dispatch(app, action);
+        }
         AppMode::Normal | AppMode::FileSelect { .. } => {
             let layout = app.layout;
             if contains(layout.commit_detail, x, y) {
@@ -108,6 +116,22 @@ fn handle_click(app: &mut App, x: u16, y: u16) {
     match &app.mode {
         AppMode::Help | AppMode::Error { .. } => {
             dispatch(app, Action::Cancel);
+        }
+        AppMode::BranchList { rows, .. } => {
+            let row_count = rows.len();
+            if contains(app.layout.graph, x, y) {
+                let Some(row) = inner_row(app.layout.graph, y) else {
+                    return;
+                };
+                let idx = app.branch_list_scroll as usize + row as usize;
+                if idx >= row_count {
+                    return;
+                }
+                app.branch_list_move(idx);
+                if is_double {
+                    dispatch(app, Action::Checkout);
+                }
+            }
         }
         AppMode::Normal | AppMode::FileSelect { .. } => {
             let layout = app.layout;

@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, Wrap},
 };
 
 /// Truncate a string to fit within max_width, adding "..." if needed
@@ -107,6 +107,63 @@ impl<'a> Widget for ConfirmDialog<'a> {
         ];
 
         let paragraph = Paragraph::new(lines).block(block);
+        Widget::render(paragraph, area, buf);
+    }
+}
+
+/// Error dialog: full message with wrapping (the status bar clips long
+/// git errors to one line, which made real failures unreadable)
+pub struct ErrorDialog<'a> {
+    message: &'a str,
+}
+
+impl<'a> ErrorDialog<'a> {
+    pub fn new(message: &'a str) -> Self {
+        Self { message }
+    }
+
+    /// Rows needed to show the whole message at the given dialog width
+    pub fn required_height(message: &str, width: u16) -> u16 {
+        let inner = width.saturating_sub(4).max(1) as usize;
+        let text_rows = message
+            .lines()
+            .map(|line| line.chars().count().max(1).div_ceil(inner))
+            .sum::<usize>() as u16;
+        // borders + padding row + hint row
+        text_rows + 4
+    }
+}
+
+impl<'a> Widget for ErrorDialog<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        Clear.render(area, buf);
+
+        let block = Block::default()
+            .title(" Error ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red))
+            .border_type(BorderType::Rounded)
+            .style(Style::default().bg(Color::Black));
+
+        let mut lines: Vec<Line> = self
+            .message
+            .lines()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(Color::White),
+                ))
+            })
+            .collect();
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Esc/Enter: close",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
         Widget::render(paragraph, area, buf);
     }
 }
