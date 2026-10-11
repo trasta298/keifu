@@ -178,7 +178,8 @@ in the Ghostty config works around it.
 - Merge commits are diffed against the first parent; the initial commit is diffed against an empty tree.
 - Changed files are capped at 50. Binary files are shown without line stats.
 - If there are staged, unstaged, or untracked changes, an "uncommitted changes" row appears at the top.
-- When multiple branches point to the same commit, the label is collapsed to a single name with a `+N` suffix (e.g., `main +2`). Use `h`/`l` or `←`/`→` to switch between them.
+- When multiple branches point to the same commit, the label is collapsed with a `+N` count of other branch labels (e.g., `[main ↔ origin, origin_2, origin_3 +1]`). A local branch and all same-named remote branches at that commit count as one label. Matching remote names are listed alphabetically after `↔` in both the collapsed label and the branch popup, including unselected branches. Remote branches at different commits or without a matching local branch remain separate. Use `h`/`l` or `←`/`→` to switch between labels.
+- Long branch names and remote lists are abbreviated to fit; commit details retain the full ref names.
 - Checking out `origin/xxx` creates or updates a local branch. Upstream is set only when creating a new branch. If the local branch exists but points to a different commit, it is force-updated to match the remote.
 - Remote branches are displayed by default. Press `o` to hide them; when hidden, commits reachable only from remote branches are excluded from the graph.
 - Tags are displayed by default. Press `t` to hide them.

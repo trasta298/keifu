@@ -30,30 +30,6 @@ use crate::{
     search::{fuzzy_search_branches, FuzzySearchResult},
 };
 
-/// Filter branch names to exclude remote branches that have matching local branches
-/// Returns branches in order: local branches first, then remote-only branches
-fn filter_remote_duplicates(branch_names: &[String]) -> Vec<&str> {
-    use std::collections::HashSet;
-
-    let local_branches: HashSet<&str> = branch_names
-        .iter()
-        .filter(|n| !n.starts_with("origin/"))
-        .map(|s| s.as_str())
-        .collect();
-
-    branch_names
-        .iter()
-        .filter(|name| {
-            if let Some(local_name) = name.strip_prefix("origin/") {
-                !local_branches.contains(local_name)
-            } else {
-                true
-            }
-        })
-        .map(|s| s.as_str())
-        .collect()
-}
-
 /// Application modes
 #[derive(Debug, Clone)]
 pub enum AppMode {
@@ -2149,17 +2125,16 @@ impl App {
     }
 
     /// Build a flat list of (node_index, branch_name) for all branches
-    /// Excludes remote branches that have a matching local branch (e.g., origin/main when main exists)
-    /// Order matches optimize_branch_display: local branches first, then remote-only branches
+    /// Uses the same grouped labels as the graph and popup.
     fn build_branch_positions(graph_layout: &GraphLayout) -> Vec<(usize, String)> {
         graph_layout
             .nodes
             .iter()
             .enumerate()
             .flat_map(|(node_idx, node)| {
-                filter_remote_duplicates(&node.branch_names)
-                    .into_iter()
-                    .map(move |name| (node_idx, name.to_string()))
+                node.branch_labels
+                    .iter()
+                    .map(move |label| (node_idx, label.name.clone()))
             })
             .collect()
     }
@@ -2396,6 +2371,7 @@ mod tests {
             lane: 0,
             color_index: 0,
             branch_names: Vec::new(),
+            branch_labels: Vec::new(),
             tag_names: Vec::new(),
             is_head: false,
             is_uncommitted: false,
@@ -2413,6 +2389,7 @@ mod tests {
             lane: 0,
             color_index: 0,
             branch_names: Vec::new(),
+            branch_labels: Vec::new(),
             tag_names: Vec::new(),
             is_head: false,
             is_uncommitted: true,
@@ -2490,6 +2467,253 @@ mod tests {
         assert!(!app.uncommitted_diff_loading);
         assert!(app.uncommitted_diff_receiver.is_none());
         assert_eq!(app.message.as_deref(), Some("Failed to load diff: boom"));
+    }
+
+    #[test]
+    fn matching_remotes_share_one_branch_label_and_navigation_entry() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let (_tempdir, repo) = init_repo();
+        repo.repo.set_head("refs/heads/main").unwrap();
+        let oid = commit_file(&repo.repo, "a.txt", "a\n", "shared tip");
+        repo.repo
+            .reference("refs/heads/dev", oid, false, "test branch")
+            .unwrap();
+        for remote in ["origin_3", "origin", "origin_2"] {
+            repo.repo
+                .remote(remote, "https://example.com/repo.git")
+                .unwrap();
+            repo.repo
+                .reference(
+                    &format!("refs/remotes/{remote}/main"),
+                    oid,
+                    false,
+                    "test branch",
+                )
+                .unwrap();
+        }
+        let mut app = make_app_from_repo(repo);
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        assert_eq!(app.selected_node_branches(), vec!["main", "dev"]);
+
+        for (action, graph_label, popup_label) in [
+            (
+                Action::GoToTop,
+                "[main ↔ origin, origin_2, origin_3 +1]",
+                "▶ main ↔ origin, origin_2, origin_3",
+            ),
+            (
+                Action::BranchRight,
+                "[dev +1]",
+                "  main ↔ origin, origin_2, origin_3",
+            ),
+            (Action::ToggleRemoteBranches, "[dev +1]", "  main"),
+        ] {
+            app.handle_action(action).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(screen.contains(graph_label), "{screen}");
+            assert!(screen.contains(popup_label), "{screen}");
+            assert_eq!(app.selected_node_branches(), vec!["main", "dev"]);
+            if !app.show_remote_branches() {
+                assert!(!screen.contains('↔'), "{screen}");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_grouping_preserves_local_paths_and_diverged_refs() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let (_tempdir, repo) = init_repo();
+        repo.repo.set_head("refs/heads/main").unwrap();
+        let first = commit_file(&repo.repo, "a.txt", "a\n", "initial");
+        let tip = commit_file(&repo.repo, "a.txt", "b\n", "local ahead");
+        for name in ["feature/topic", "topic"] {
+            repo.repo
+                .reference(&format!("refs/heads/{name}"), tip, false, "test branch")
+                .unwrap();
+        }
+        for (remote, name, oid) in [
+            ("origin_2", "main", tip),
+            ("origin_3", "main", first),
+            ("team/mirror", "feature/topic", tip),
+            ("origin_2", "remote-only", tip),
+        ] {
+            if repo.repo.find_remote(remote).is_err() {
+                repo.repo
+                    .remote(remote, "https://example.com/repo.git")
+                    .unwrap();
+            }
+            repo.repo
+                .reference(
+                    &format!("refs/remotes/{remote}/{name}"),
+                    oid,
+                    false,
+                    "test branch",
+                )
+                .unwrap();
+        }
+        let mut app = make_app_from_repo(repo);
+        assert_eq!(
+            app.selected_node_branches(),
+            vec!["main", "feature/topic", "origin_2/remote-only", "topic"]
+        );
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("[main ↔ origin_2 +3]"), "{screen}");
+        assert!(screen.contains("  feature/topic ↔ team/mirror"), "{screen}");
+        assert!(screen.contains("[origin_3/main]"), "{screen}");
+        assert!(!screen.contains("topic ↔ feature"), "{screen}");
+    }
+
+    #[test]
+    fn grouped_branch_label_preserves_count_and_brackets_in_narrow_graphs() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for remotes in [
+            ["origin", "origin_2", "origin_3"],
+            ["origin", "リモートの長い名前", "別のリモートの長い名前"],
+        ] {
+            let (_tempdir, repo) = init_repo();
+            repo.repo.set_head("refs/heads/main").unwrap();
+            let oid = commit_file(&repo.repo, "a.txt", "a\n", "shared tip");
+            repo.repo
+                .reference("refs/heads/dev", oid, false, "test branch")
+                .unwrap();
+            for remote in remotes {
+                repo.repo
+                    .remote(remote, "https://example.com/repo.git")
+                    .unwrap();
+                repo.repo
+                    .reference(
+                        &format!("refs/remotes/{remote}/main"),
+                        oid,
+                        false,
+                        "test branch",
+                    )
+                    .unwrap();
+            }
+            let mut app = make_app_from_repo(repo);
+            for width in [20, 32, 40, 110] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let row: String = (0..width).map(|x| buffer[(x, 1)].symbol()).collect();
+
+                assert!(row.contains("[main"), "{width}: {row}");
+                assert!(row.contains(" +1]"), "{width}: {row}");
+                assert_eq!(buffer[(width - 1, 1)].symbol(), "│", "{width}: {row}");
+            }
+        }
+    }
+
+    #[test]
+    fn branch_popup_preserves_origin_marker_for_unselected_branch() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let (_tempdir, repo) = init_repo();
+        repo.repo.set_head("refs/heads/fix/example").unwrap();
+        let oid = commit_file(&repo.repo, "a.txt", "a\n", "shared tip");
+        for name in [
+            "refs/heads/main",
+            "refs/heads/revert/example",
+            "refs/remotes/origin/main",
+        ] {
+            repo.repo
+                .reference(name, oid, false, "test branch")
+                .unwrap();
+        }
+        let mut app = make_app_from_repo(repo);
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+
+        for (keys, selected, graph_label, popup_label) in [
+            (
+                Action::GoToTop,
+                "fix/example",
+                "[fix/example +2]",
+                "  main ↔ origin",
+            ),
+            (
+                Action::BranchRight,
+                "main",
+                "[main ↔ origin +2]",
+                "▶ main ↔ origin",
+            ),
+            (Action::ToggleRemoteBranches, "main", "[main +2]", "▶ main"),
+        ] {
+            app.handle_action(keys).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert_eq!(app.selected_branch_name(), Some(selected));
+            assert!(screen.contains(graph_label), "{screen}");
+            assert!(screen.contains(popup_label), "{screen}");
+            assert_eq!(app.selected_node_branches().len(), 3);
+            if !app.show_remote_branches() {
+                assert!(!screen.contains("↔ origin"), "{screen}");
+            }
+        }
+    }
+
+    #[test]
+    fn branch_popup_keeps_origin_marker_when_truncating_long_names() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for name in [
+            "feature/this-is-a-very-long-branch-name-12345",
+            "feature/とても長いブランチ名のテストです-12345",
+        ] {
+            let (_tempdir, repo) = init_repo();
+            repo.repo.set_head("refs/heads/main").unwrap();
+            let oid = commit_file(&repo.repo, "a.txt", "a\n", "shared tip");
+            for prefix in ["refs/heads/", "refs/remotes/origin/"] {
+                repo.repo
+                    .reference(&format!("{prefix}{name}"), oid, false, "test branch")
+                    .unwrap();
+            }
+            let mut app = make_app_from_repo(repo);
+            for width in [110, 32, 20] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
+                let screen: String = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                assert!(screen.contains("... ↔ origin"), "{screen}");
+            }
+        }
     }
 
     #[test]

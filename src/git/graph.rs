@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use git2::Oid;
 
+use super::branch::{group_branch_labels, BranchLabel};
 use super::{BranchInfo, CommitInfo, TagInfo};
 use crate::graph::colors::{ColorAssigner, UNCOMMITTED_COLOR_INDEX};
 
@@ -18,6 +19,8 @@ pub struct GraphNode {
     pub color_index: usize,
     /// Branch names pointing to this commit
     pub branch_names: Vec<String>,
+    /// Grouped labels shared by graph rendering, popup rendering, and navigation.
+    pub branch_labels: Vec<BranchLabel>,
     pub tag_names: Vec<String>,
     /// Whether HEAD points to this commit
     pub is_head: bool,
@@ -86,6 +89,7 @@ pub fn build_graph(
                     lane: 0,
                     color_index: UNCOMMITTED_COLOR_INDEX,
                     branch_names: Vec::new(),
+                    branch_labels: Vec::new(),
                     tag_names: Vec::new(),
                     is_head: false,
                     is_uncommitted: true,
@@ -102,14 +106,14 @@ pub fn build_graph(
         };
     }
 
-    // OID -> branch name mapping
-    let mut oid_to_branches: HashMap<Oid, Vec<String>> = HashMap::new();
+    // OID -> branch metadata mapping
+    let mut oid_to_branches: HashMap<Oid, Vec<&BranchInfo>> = HashMap::new();
     let mut head_oid: Option<Oid> = None;
     for branch in branches {
         oid_to_branches
             .entry(branch.tip_oid)
             .or_default()
-            .push(branch.name.clone());
+            .push(branch);
         if branch.is_head {
             head_oid = Some(branch.tip_oid);
         }
@@ -238,6 +242,7 @@ pub fn build_graph(
                 lane: main_lane,
                 color_index: main_color,
                 branch_names: Vec::new(),
+                branch_labels: Vec::new(),
                 tag_names: Vec::new(),
                 is_head: false,
                 is_uncommitted: false,
@@ -394,10 +399,15 @@ pub fn build_graph(
             max_lane,
         );
 
-        let branch_names = oid_to_branches
+        let commit_branches = oid_to_branches
             .get(&commit.oid)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
+        let branch_names = commit_branches
+            .iter()
+            .map(|branch| branch.name.clone())
+            .collect();
+        let branch_labels = group_branch_labels(commit_branches);
         let tag_names = oid_to_tags.get(&commit.oid).cloned().unwrap_or_default();
 
         let is_head = head_oid.map(|h| h == commit.oid).unwrap_or(false);
@@ -408,6 +418,7 @@ pub fn build_graph(
             lane,
             color_index: final_color_index,
             branch_names,
+            branch_labels,
             tag_names,
             is_head,
             is_uncommitted: false,
@@ -571,6 +582,7 @@ pub fn build_graph(
                     lane: uncommitted_lane,
                     color_index: UNCOMMITTED_COLOR_INDEX,
                     branch_names: Vec::new(),
+                    branch_labels: Vec::new(),
                     tag_names: Vec::new(),
                     is_head: false,
                     is_uncommitted: true,

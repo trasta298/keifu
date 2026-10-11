@@ -33,6 +33,7 @@ fn make_branch(name: &str, tip: &str, is_head: bool) -> BranchInfo {
         tip_oid: make_oid(tip),
         is_head,
         is_remote: false,
+        remote_name: None,
         upstream: None,
     }
 }

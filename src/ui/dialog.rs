@@ -8,14 +8,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
-/// Truncate a string to fit within max_width, adding "..." if needed
-fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
-    if s.len() <= max_width {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_width.saturating_sub(3)])
-    }
-}
+use super::graph_view::{display_width, truncate_with_ellipsis};
+use crate::git::branch::BranchLabel;
 
 /// Input dialog
 pub struct InputDialog<'a> {
@@ -113,12 +107,12 @@ impl<'a> Widget for ConfirmDialog<'a> {
 
 /// Branch info popup (shown when multiple branches exist on selected node)
 pub struct BranchInfoPopup<'a> {
-    branches: &'a [&'a str],
+    branches: &'a [BranchLabel],
     selected_branch: Option<&'a str>,
 }
 
 impl<'a> BranchInfoPopup<'a> {
-    pub fn new(branches: &'a [&'a str], selected_branch: Option<&'a str>) -> Self {
+    pub fn new(branches: &'a [BranchLabel], selected_branch: Option<&'a str>) -> Self {
         Self {
             branches,
             selected_branch,
@@ -147,7 +141,7 @@ impl<'a> Widget for BranchInfoPopup<'a> {
             }
 
             let y = inner.y + i as u16;
-            let is_selected = self.selected_branch == Some(*branch);
+            let is_selected = self.selected_branch == Some(branch.name.as_str());
             let style = if is_selected {
                 Style::default()
                     .fg(Color::Black)
@@ -158,14 +152,49 @@ impl<'a> Widget for BranchInfoPopup<'a> {
             };
 
             let prefix = if is_selected { "▶ " } else { "  " };
-            let max_width = inner.width as usize;
+            let max_width = (inner.width as usize).saturating_sub(2);
+            let suffix = truncate_with_ellipsis(
+                &branch.remote_suffix,
+                max_width.saturating_sub(display_width(&branch.name).min(4)),
+            );
             let display = format!(
-                "{}{}",
+                "{}{}{}",
                 prefix,
-                truncate_with_ellipsis(branch, max_width.saturating_sub(2))
+                truncate_with_ellipsis(
+                    &branch.name,
+                    max_width.saturating_sub(display_width(&suffix))
+                ),
+                suffix
             );
 
             buf.set_string(inner.x, y, &display, style);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn many_remotes_keep_branch_name_and_popup_border_visible() {
+        for suffix in [
+            " ↔ origin, origin_2, origin_3, origin_4, origin_5",
+            " ↔ origin, リモートの長い名前, 別のリモートの長い名前",
+        ] {
+            let branches = [BranchLabel {
+                name: "main".to_string(),
+                remote_suffix: suffix.to_string(),
+            }];
+            for width in [20, 32, 50] {
+                let area = Rect::new(0, 0, width, 3);
+                let mut buffer = Buffer::empty(area);
+                BranchInfoPopup::new(&branches, Some("main")).render(area, &mut buffer);
+                let row: String = (0..width).map(|x| buffer[(x, 1)].symbol()).collect();
+                assert!(row.starts_with("│▶ main ↔ "), "{row}");
+                assert!(row.contains("..."), "{row}");
+                assert_eq!(buffer[(width - 1, 1)].symbol(), "│", "{row}");
+            }
         }
     }
 }
