@@ -163,6 +163,10 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         Line::from(Span::styled("Other", header_style)),
         Line::from(vec![
+            Span::styled("  Drag       ", key_style),
+            Span::styled("Select text; release to copy", desc_style),
+        ]),
+        Line::from(vec![
             Span::styled("  y          ", key_style),
             Span::styled("Copy commit hash to clipboard", desc_style),
         ]),

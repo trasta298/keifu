@@ -116,23 +116,33 @@ pub fn handle_request(app: &mut App, width: u16, height: u16, request: DebugRequ
             Err(e) => json!({"ok": false, "error": e}),
         },
         DebugRequest::Mouse { kind, x, y } => {
+            let click = kind == "click";
             let kind = match kind.as_str() {
-                "click" => MouseEventKind::Down(MouseButton::Left),
+                "click" | "press" => MouseEventKind::Down(MouseButton::Left),
+                "drag" => MouseEventKind::Drag(MouseButton::Left),
+                "release" => MouseEventKind::Up(MouseButton::Left),
                 "scroll_up" => MouseEventKind::ScrollUp,
                 "scroll_down" => MouseEventKind::ScrollDown,
                 other => {
                     return json!({"ok": false, "error": format!("unknown mouse kind: {other}")})
                 }
             };
-            mouse::handle_mouse(
-                app,
-                MouseEvent {
-                    kind,
-                    column: x,
-                    row: y,
-                    modifiers: KeyModifiers::NONE,
-                },
-            );
+            let event = MouseEvent {
+                kind,
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            };
+            mouse::handle_mouse(app, event);
+            if click {
+                mouse::handle_mouse(
+                    app,
+                    MouseEvent {
+                        kind: MouseEventKind::Up(MouseButton::Left),
+                        ..event
+                    },
+                );
+            }
             json!({"ok": true})
         }
         DebugRequest::Dump {
@@ -208,6 +218,7 @@ fn state_json(app: &App) -> Value {
         "detail_scroll": app.detail_scroll,
         "help_scroll": app.help_scroll,
         "message": app.get_message(),
+        "selected_text": app.text_selection.as_ref().filter(|s| s.dragged).map(|s| s.text()),
         "is_fetching": app.is_fetching(),
         "is_pushing": app.is_pushing(),
     })

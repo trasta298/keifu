@@ -207,6 +207,8 @@ pub struct App {
     pub help_scroll: u16,
     /// Last mouse click (time, column, row) for double-click detection
     pub last_click: Option<(Instant, u16, u16)>,
+    pub text_selection: Option<crate::selection::TextSelection>,
+    pub screen: ratatui::buffer::Buffer,
     /// Clickable status bar hint regions (updated during render)
     pub status_hints: Vec<(Rect, Action)>,
     /// Performance counters (inspect via the debug server's "perf" command)
@@ -361,6 +363,8 @@ impl App {
             files_pane_scroll: 0,
             help_scroll: 0,
             last_click: None,
+            text_selection: None,
+            screen: ratatui::buffer::Buffer::empty(Rect::default()),
             status_hints: Vec::new(),
             perf: PerfStats::default(),
             branch_positions,
@@ -1099,6 +1103,9 @@ impl App {
 
     /// Handle an action
     pub fn handle_action(&mut self, action: Action) -> Result<()> {
+        if self.text_selection.take().is_some() && matches!(action, Action::Quit | Action::Cancel) {
+            return Ok(());
+        }
         match &self.mode {
             AppMode::Normal => self.handle_normal_action(action)?,
             AppMode::Help => self.handle_help_action(action),
@@ -2250,6 +2257,8 @@ mod tests {
             files_pane_scroll: 0,
             help_scroll: 0,
             last_click: None,
+            text_selection: None,
+            screen: ratatui::buffer::Buffer::empty(Rect::default()),
             status_hints: Vec::new(),
             perf: PerfStats::default(),
             branch_positions,
@@ -2331,6 +2340,8 @@ mod tests {
             files_pane_scroll: 0,
             help_scroll: 0,
             last_click: None,
+            text_selection: None,
+            screen: ratatui::buffer::Buffer::empty(Rect::default()),
             status_hints: Vec::new(),
             perf: PerfStats::default(),
             branch_positions: Vec::new(),
@@ -2402,6 +2413,124 @@ mod tests {
             has_collapsed_untracked_dirs: false,
         };
         make_base_app(node, DiffTarget::Uncommitted, Some(wts))
+    }
+
+    #[test]
+    fn dragging_selects_text_without_activating_clicks_and_scroll_clears_it() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+        let (_tempdir, repo) = init_repo();
+        commit_file(&repo.repo, "a.txt", "first\n", "first commit");
+        commit_file(&repo.repo, "a.txt", "second\n", "second commit");
+        let mut app = make_app_from_repo(repo);
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        crate::mouse::handle_mouse(&mut app, event);
+        assert_eq!(app.graph_list_state.selected(), Some(0));
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 16,
+                ..event
+            },
+        );
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert_eq!(app.graph_list_state.selected(), Some(0));
+        assert_eq!(app.text_selection.as_ref().unwrap().text(), "first commit");
+        assert_eq!(terminal.backend().buffer()[(5, 2)].bg, Color::LightBlue);
+        crate::mouse::handle_scroll(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..event
+            },
+            1,
+        );
+        assert!(app.text_selection.is_none());
+        assert_eq!(app.graph_list_state.selected(), Some(1));
+
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        crate::mouse::handle_mouse(&mut app, event);
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 16,
+                ..event
+            },
+        );
+        app.handle_action(Action::Quit).unwrap();
+        assert!(app.text_selection.is_none());
+        assert!(!app.should_quit);
+
+        terminal.backend_mut().resize(10, 4);
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        crate::mouse::handle_mouse(&mut app, event);
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: u16::MAX,
+                row: u16::MAX,
+                ..event
+            },
+        );
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert!(app.text_selection.as_ref().unwrap().text().chars().count() <= 40);
+    }
+
+    #[test]
+    fn clicks_and_double_clicks_still_select_and_open_files_on_release() {
+        use crate::debug_server::{handle_request, DebugRequest};
+
+        let (_tempdir, repo) = init_repo();
+        let first = commit_file(&repo.repo, "a.txt", "first\n", "first commit");
+        commit_file(&repo.repo, "a.txt", "second\n", "second commit");
+        let mut app = make_app_from_repo(repo);
+        handle_request(
+            &mut app,
+            110,
+            30,
+            DebugRequest::Dump {
+                width: None,
+                height: None,
+            },
+        );
+        app.diff_cache = Some(CommitDiffInfo::from_commit(&app.repo.repo, first).unwrap());
+        app.diff_cache_oid = Some(first);
+        for _ in 0..2 {
+            handle_request(
+                &mut app,
+                110,
+                30,
+                DebugRequest::Mouse {
+                    kind: "click".into(),
+                    x: 10,
+                    y: 2,
+                },
+            );
+        }
+        assert_eq!(app.graph_list_state.selected(), Some(1));
+        assert!(matches!(app.mode, AppMode::FileSelect { .. }));
+        assert!(app.text_selection.is_none());
     }
 
     #[test]
@@ -3077,5 +3206,87 @@ mod tests {
 
         wheel(&mut app, layout.graph);
         assert_eq!(open_diff_position(&app), (1, 3));
+    }
+
+    #[test]
+    fn border_started_selection_stays_in_its_pane() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::layout::Position;
+
+        for open_diff in [false, true] {
+            let (_tempdir, mut app, mut terminal) = replace_mode_app();
+            if open_diff {
+                app.open_file_select(0);
+                app.handle_action(Action::OpenFileDiff).unwrap();
+            }
+            render_files_pane(&mut terminal, &mut app);
+            let files = app.layout.files;
+            for (x, y) in [
+                (files.x + 3, files.y),
+                (files.x, files.y + 2),
+                (files.right() - 1, files.y + 2),
+                (files.x + 3, files.bottom() - 1),
+            ] {
+                let before = terminal.backend().buffer().clone();
+                let event = MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: x,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                };
+                crate::mouse::handle_mouse(&mut app, event);
+                crate::mouse::handle_mouse(
+                    &mut app,
+                    MouseEvent {
+                        kind: MouseEventKind::Drag(MouseButton::Left),
+                        column: files.x + 20,
+                        row: files.y + 4,
+                        ..event
+                    },
+                );
+                render_files_pane(&mut terminal, &mut app);
+                let text = app.text_selection.as_ref().unwrap().text();
+                assert!(text.contains("file_0"), "{text}");
+                assert!(!text.contains("Author"), "{text}");
+                assert!(!text.contains("message line"), "{text}");
+
+                let buffer = terminal.backend().buffer();
+                for y in files.y..files.bottom() {
+                    for x in 0..110 {
+                        if !files.contains(Position::new(x, y)) {
+                            assert_eq!(buffer[(x, y)].bg, before[(x, y)].bg, "{x},{y}: {text}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn replace_mode_selection_excludes_the_neighboring_file_list() {
+        use crate::debug_server::{handle_request, DebugRequest};
+
+        let (_tempdir, mut app, mut terminal) = replace_mode_app();
+        app.open_file_select(0);
+        app.handle_action(Action::OpenFileDiff).unwrap();
+        render_files_pane(&mut terminal, &mut app);
+        let detail = app.layout.commit_detail;
+        for (kind, x) in [("press", detail.x + 2), ("drag", app.layout.files.right())] {
+            handle_request(
+                &mut app,
+                110,
+                30,
+                DebugRequest::Mouse {
+                    kind: kind.into(),
+                    x,
+                    y: detail.y + 1,
+                },
+            );
+        }
+        assert_eq!(
+            app.text_selection.as_ref().unwrap().text(),
+            app.repo.head_oid().unwrap().to_string()
+        );
+        assert_eq!(open_diff_position(&app), (0, 0));
     }
 }

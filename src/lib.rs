@@ -12,5 +12,6 @@ pub mod logging;
 pub mod mouse;
 pub mod perf;
 pub mod search;
+pub mod selection;
 pub mod tui;
 pub mod ui;

@@ -25,6 +25,7 @@ keifu (系譜, /keːɸɯ/) is a terminal UI tool that visualizes Git commit grap
 - File diff view with syntax highlighting and word-level change emphasis
 - Git operations: checkout, create/delete branch, fetch, stage/unstage, commit, push
 - Mouse support: click to select commits/files/panes, clickable status bar hints, per-pane wheel scrolling
+- Drag to select visible text within a pane; release to copy it to the clipboard
 - Branch search with dropdown UI
 - Remote-control debug server and file logging for agent-driven debugging (see [docs/debugging.md](docs/debugging.md))
 
@@ -127,9 +128,12 @@ Staging keys work when the "uncommitted changes" row is selected.
 | Click on a pane | Focus the pane |
 | Click on a status bar hint | Run that action |
 | Wheel scroll | Scrolls the pane under the cursor |
+| Left drag | Select visible text within a pane; release to copy (OSC 52) |
 
-Since keifu captures mouse input, use your terminal's modifier for native
-text selection (usually `Shift` + drag; `Fn` + drag on iTerm2).
+Clicks and double-clicks run on release, so dragging does not activate them.
+Selection covers visible text only; scrolling or changing the view clears it.
+Your terminal's native selection remains available with its modifier
+(usually `Shift` + drag; `Fn` + drag on iTerm2).
 
 Note: Ghostty currently fans one wheel notch out into multiple scroll events
 for mouse-mode apps ([ghostty#3955](https://github.com/ghostty-org/ghostty/discussions/3955)),

@@ -121,6 +121,22 @@ pub fn render_placeholder_block(area: Rect, buf: &mut Buffer) {
 
 /// Render the main UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    draw_content(frame, app);
+    let screen = frame.buffer_mut();
+    if app
+        .text_selection
+        .as_ref()
+        .is_some_and(|selection| !selection.matches_screen(screen))
+    {
+        app.text_selection = None;
+    }
+    app.screen.clone_from(screen);
+    if let Some(selection) = &app.text_selection {
+        selection.highlight(screen);
+    }
+}
+
+fn draw_content(frame: &mut Frame, app: &mut App) {
     // Update the diff cache once before rendering
     app.update_diff_cache();
 

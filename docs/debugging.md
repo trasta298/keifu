@@ -57,11 +57,12 @@ is unauthenticated.
   layer. Single characters are sent as-is (uppercase implies Shift). Special
   keys: `<enter> <esc> <tab> <backtab> <space> <up> <down> <left> <right>
   <home> <end> <pgup> <pgdn> <backspace> <c-x>` (Ctrl+x).
-- `mouse` — `kind` is `click`, `scroll_up`, or `scroll_down`; `x`/`y` are
-  screen coordinates (0-based).
+- `mouse` — `kind` is `click` (press + release), `press`, `drag`, `release`,
+  `scroll_up`, or `scroll_down`; `x`/`y` are screen coordinates (0-based).
+  Use `press` → `drag` → `release` to test selection and clipboard output.
 - `dump` — renders the current state to plain text. Without `width`/`height`
   the real terminal size is used (falling back to sane bounds when headless).
-- `state` — mode, focused pane, selection, HEAD, async operation status.
+- `state` — mode, focused pane, selection, selected text, HEAD, async operation status.
 
 For performance questions, use the log instead (see above).
 

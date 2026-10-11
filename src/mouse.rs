@@ -6,11 +6,12 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::{Margin, Position, Rect};
 
 use crate::{
     action::Action,
     app::{App, AppMode, FocusedPane},
+    selection::TextSelection,
 };
 
 /// Max delay between two clicks on the same cell to count as a double-click
@@ -19,12 +20,53 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 pub fn handle_mouse(app: &mut App, event: MouseEvent) {
     match event.kind {
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => handle_scroll(app, event, 1),
-        MouseEventKind::Down(MouseButton::Left) => handle_click(app, event.column, event.row),
+        MouseEventKind::Down(MouseButton::Left) => {
+            let position = Position::new(event.column, event.row);
+            app.text_selection = None;
+            if app.screen.area.contains(position) {
+                let area = selection_area(app, position);
+                app.text_selection = Some(TextSelection::new(&app.screen, area, position));
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(selection) = app.text_selection.as_mut().filter(|s| s.pressed) {
+                selection.update(Position::new(event.column, event.row));
+                if selection.dragged {
+                    app.last_click = None;
+                }
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            let Some(mut selection) = app.text_selection.take() else {
+                return;
+            };
+            if !selection.pressed {
+                app.text_selection = Some(selection);
+                return;
+            }
+            selection.update(Position::new(event.column, event.row));
+            selection.pressed = false;
+            if selection.dragged {
+                app.last_click = None;
+                let text = selection.text();
+                if !text.is_empty() {
+                    match crate::tui::copy_to_clipboard(&text) {
+                        Ok(()) => app.set_message("Copied selection"),
+                        Err(error) => app.set_message(format!("Copy failed: {error}")),
+                    }
+                }
+                app.text_selection = Some(selection);
+            } else {
+                handle_click(app, selection.start.x, selection.start.y);
+            }
+        }
         _ => {}
     }
 }
 
 pub fn handle_scroll(app: &mut App, event: MouseEvent, steps: usize) {
+    app.text_selection = None;
+    app.last_click = None;
     let steps = i32::try_from(steps).unwrap_or(i32::MAX);
     let delta = match event.kind {
         MouseEventKind::ScrollDown => steps,
@@ -32,6 +74,34 @@ pub fn handle_scroll(app: &mut App, event: MouseEvent, steps: usize) {
         _ => return,
     };
     handle_scroll_delta(app, delta, event.column, event.row);
+}
+
+fn selection_area(app: &App, position: Position) -> Rect {
+    let panes = match app.mode {
+        AppMode::FileDiff { .. } if !app.file_view_replace() => vec![Rect::new(
+            app.screen.area.x,
+            app.screen.area.y,
+            app.screen.area.width,
+            app.screen.area.height.saturating_sub(1),
+        )],
+        AppMode::Normal | AppMode::FileSelect { .. } | AppMode::FileDiff { .. } => {
+            vec![app.layout.graph, app.layout.commit_detail, app.layout.files]
+        }
+        _ => Vec::new(),
+    };
+    panes
+        .into_iter()
+        .map(|area| area.intersection(app.screen.area))
+        .find(|area| area.contains(position))
+        .map(|area| {
+            let inner = area.inner(Margin::new(1, 1));
+            if inner.contains(position) {
+                inner
+            } else {
+                area
+            }
+        })
+        .unwrap_or(app.screen.area)
 }
 
 fn dispatch(app: &mut App, action: Action) {
