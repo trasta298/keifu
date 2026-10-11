@@ -496,10 +496,34 @@ fn render_graph_line<'a>(
     // === Left-aligned: branch names + message ===
 
     let remaining_for_content = total_width.saturating_sub(left_width);
+    // Ref lengths vary by row; choose metadata columns before allocating their space.
+    let (show_date, show_author, show_hash, right_width) =
+        compute_right_side_visibility(remaining_for_content);
+    let content_width = remaining_for_content.saturating_sub(right_width);
+    let tag_count_width = if node.tag_names.len() > 1 {
+        display_width(&format!(" +{}", node.tag_names.len() - 1))
+    } else {
+        0
+    };
+    // Leave room for an abbreviated tag and its separator alongside a branch label.
+    let reserved_tag_width = if node.tag_names.is_empty() {
+        0
+    } else {
+        ABBREVIATED_LABEL_OVERHEAD + tag_count_width + 1
+    };
+    // Without metadata, prioritize keeping branch labels usable even in very narrow panes.
+    let max_branch_width = if right_width == 0 {
+        content_width.saturating_sub(1)
+    } else {
+        content_width
+            .saturating_sub(MIN_COMMIT_MESSAGE_WIDTH)
+            .saturating_sub(reserved_tag_width)
+            .saturating_sub(1)
+    };
     // Render the grouped labels used for navigation and the branch popup.
     let branch_display = optimize_branch_display(
         &node.branch_labels,
-        remaining_for_content.saturating_sub(1),
+        max_branch_width,
         node.is_head,
         node.color_index,
         selected_branch_name,
@@ -509,7 +533,7 @@ fn render_graph_line<'a>(
     // === Right-aligned: date author hash (fixed width) ===
     let date = commit.timestamp.format("%Y-%m-%d").to_string(); // 10 chars
     let author = truncate_to_width(&commit.author_name, 8);
-    let author_formatted = format!("{:<8}", author); // fixed 8 chars
+    let author_formatted = format!("{}{}", author, " ".repeat(8 - display_width(&author)));
     let hash = truncate_to_width(&commit.short_id, 7);
     let hash_formatted = format!("{:<7}", hash); // fixed 7 chars
 
@@ -520,7 +544,7 @@ fn render_graph_line<'a>(
         .sum::<usize>()
         + if !branch_display.is_empty() { 1 } else { 0 };
 
-    let max_tag_width = remaining_for_content
+    let max_tag_width = content_width
         .saturating_sub(branch_width)
         .saturating_sub(MIN_COMMIT_MESSAGE_WIDTH)
         .saturating_sub(1)
@@ -532,11 +556,9 @@ fn render_graph_line<'a>(
         .sum::<usize>()
         + if !tag_display.is_empty() { 1 } else { 0 };
 
-    let remaining_after_refs = remaining_for_content
+    let available_for_message = content_width
         .saturating_sub(branch_width)
         .saturating_sub(tag_width);
-    let (show_date, show_author, show_hash, right_width) =
-        compute_right_side_visibility(remaining_after_refs);
 
     // Render branch labels
     for (i, (label, style)) in branch_display.iter().enumerate() {
@@ -561,7 +583,6 @@ fn render_graph_line<'a>(
         left_width += 1;
     }
 
-    let available_for_message = remaining_after_refs.saturating_sub(right_width);
     let message = truncate_to_width(&commit.message, available_for_message);
     let message_width = display_width(&message);
     spans.push(Span::styled(message, msg_style));
@@ -760,15 +781,14 @@ mod tests {
         assert_eq!(abbreviate_ref_label("main", 40, 2, '[', ']'), "[main +2]");
     }
 
-    #[test]
-    fn long_branch_and_tags_preserve_commit_message_within_viewport() {
+    fn commit_node() -> GraphNode {
         use chrono::Local;
         use git2::Oid;
 
         use crate::git::CommitInfo;
 
         let oid = Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-        let node = GraphNode {
+        GraphNode {
             commit: Some(CommitInfo {
                 oid,
                 short_id: "aaaaaaa".to_string(),
@@ -781,19 +801,79 @@ mod tests {
             }),
             lane: 0,
             color_index: 0,
-            branch_names: vec!["feature/this-is-a-very-long-branch-name-123456789".to_string()],
-            branch_labels: labels(&[
-                "feature/this-is-a-very-long-branch-name-123456789".to_string()
-            ]),
-            tag_names: vec![
-                "release/this-is-a-very-long-tag-name-123456789".to_string(),
-                "release/zzz-second-tag".to_string(),
-            ],
+            branch_names: Vec::new(),
+            branch_labels: Vec::new(),
+            tag_names: Vec::new(),
             is_head: false,
             is_uncommitted: false,
             uncommitted_count: None,
             cells: vec![CellType::Commit(0)],
-        };
+        }
+    }
+
+    fn rendered_line(node: &GraphNode, width: usize) -> String {
+        render_graph_line(node, 0, false, width, None)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    fn column_of(text: &str, value: &str) -> Option<usize> {
+        text.find(value).map(|index| display_width(&text[..index]))
+    }
+
+    #[test]
+    fn metadata_columns_align_across_ref_lengths() {
+        let plain = commit_node();
+        let mut with_refs = plain.clone();
+        with_refs.branch_names = vec![
+            "feature/とても長いブランチ名のテストです-12345".to_string(),
+            "origin/feature/とても長いブランチ名のテストです-12345".to_string(),
+        ];
+        with_refs.branch_labels = labels(&with_refs.branch_names);
+        with_refs.tag_names = vec!["release/a-very-long-tag-name".to_string(), "v1".to_string()];
+        let commit = plain.commit.as_ref().unwrap();
+        let date = commit.timestamp.format("%Y-%m-%d").to_string();
+
+        for width in [108, 148, 85, 76, 65, 54] {
+            let expected = rendered_line(&plain, width);
+            let actual = rendered_line(&with_refs, width);
+            for value in [date.as_str(), &commit.author_name, &commit.short_id] {
+                assert_eq!(
+                    column_of(&actual, value),
+                    column_of(&expected, value),
+                    "{value} at width {width}: {actual}"
+                );
+            }
+            assert!(display_width(&actual) <= width, "{actual}");
+        }
+    }
+
+    #[test]
+    fn unicode_author_names_keep_hash_column_aligned() {
+        let mut node = commit_node();
+        let expected = rendered_line(&node, 108);
+        for author in ["山田太郎", "Zo\u{308}e", "🐛 Dev"] {
+            node.commit.as_mut().unwrap().author_name = author.to_string();
+            let actual = rendered_line(&node, 108);
+            assert_eq!(
+                column_of(&actual, "aaaaaaa"),
+                column_of(&expected, "aaaaaaa")
+            );
+            assert_eq!(display_width(&actual), 108);
+        }
+    }
+
+    #[test]
+    fn long_branch_and_tags_preserve_commit_message_within_viewport() {
+        let mut node = commit_node();
+        node.branch_names = vec!["feature/this-is-a-very-long-branch-name-123456789".to_string()];
+        node.branch_labels = labels(&node.branch_names);
+        node.tag_names = vec![
+            "release/this-is-a-very-long-tag-name-123456789".to_string(),
+            "release/zzz-second-tag".to_string(),
+        ];
         let width = 78;
         let line = render_graph_line(&node, 0, false, width, None);
         let rendered = line
