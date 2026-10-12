@@ -767,8 +767,13 @@ impl App {
                     }
                 }
             }
-            Err(e) if !silent => self.show_error(e),
-            Err(_) => {} // Silent mode: suppress error dialog for auto-fetch
+            Err(e) => {
+                // Delay the next fetch attempt without postponing a due local refresh.
+                self.last_fetch_time = Instant::now();
+                if !silent {
+                    self.show_error(e);
+                }
+            }
         }
     }
 
@@ -3022,6 +3027,57 @@ mod tests {
             .nodes
             .first()
             .is_some_and(|node| node.is_uncommitted));
+    }
+
+    #[test]
+    fn failed_auto_fetch_allows_due_local_refresh() {
+        let (tempdir, repo) = init_repo();
+        commit_file(&repo.repo, "tracked.txt", "initial\n", "initial");
+        let mut app = make_app_from_repo(repo);
+        app.repo_path = tempdir.path().to_string_lossy().into_owned();
+        let new_oid = commit_file(&app.repo.repo, "tracked.txt", "next\n", "next");
+        let overdue = Instant::now() - Duration::from_secs(120);
+        app.last_fetch_time = overdue;
+        app.last_refresh_time = overdue;
+        let (sender, receiver) = mpsc::channel();
+        app.fetch_receiver = Some(receiver);
+        app.fetch_silent = true;
+        sender.send(Err("fetch failed".to_string())).unwrap();
+
+        app.update_fetch_status(true);
+
+        assert!(!app.is_fetching());
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert_eq!(app.last_refresh_time, overdue);
+
+        app.check_auto_refresh();
+
+        assert!(
+            !app.is_fetching(),
+            "failed fetch must not immediately retry"
+        );
+        assert!(app.commits.iter().any(|commit| commit.oid == new_oid));
+    }
+
+    #[test]
+    fn failed_manual_fetch_delays_retry_and_keeps_error_dialog() {
+        let (_tempdir, repo) = init_repo();
+        commit_file(&repo.repo, "tracked.txt", "initial\n", "initial");
+        let mut app = make_app_from_repo(repo);
+        let overdue = Instant::now() - Duration::from_secs(120);
+        app.last_fetch_time = overdue;
+        app.last_refresh_time = overdue;
+        let (sender, receiver) = mpsc::channel();
+        app.fetch_receiver = Some(receiver);
+        sender.send(Err("fetch failed".to_string())).unwrap();
+        let before_completion = Instant::now();
+
+        app.update_fetch_status(false);
+
+        assert!(!app.is_fetching());
+        assert!(app.last_fetch_time >= before_completion);
+        assert_eq!(app.last_refresh_time, overdue);
+        assert!(matches!(app.mode, AppMode::Error { ref message } if message == "fetch failed"));
     }
 
     #[test]
