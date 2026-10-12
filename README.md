@@ -18,9 +18,8 @@ changes with the keyboard or mouse.
 - **Keep work moving** — Search and switch branches, stage files, write a commit, and push to origin.
 - **Fit your workspace** — Use keyboard shortcuts, click and scroll each pane, or run in a narrow terminal split. No image protocol required.
 
-Screenshots show the development version. The pane-preserving diff layout and
-drag-to-copy shown or described below are newer than v0.6.0;
-[build from source](#from-source) to try them before the next release.
+The pane-preserving diff layout and drag-to-copy shown or described below
+are available in v0.7.0 and later.
 
 ## Installation
 

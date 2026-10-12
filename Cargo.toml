@@ -1,6 +1,6 @@
 [package]
 name = "keifu"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "A TUI tool to visualize Git commit graphs with branch genealogy"
 license = "MIT"
