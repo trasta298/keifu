@@ -40,8 +40,8 @@ def create_demo(root):
         git("commit", "-m", message, *args)
 
     git("init", "-b", "main")
-    git("config", "user.name", "Alex")
-    git("config", "user.email", "alex@example.com")
+    git("config", "user.name", "trasta")
+    git("config", "user.email", "trasta@example.com")
     write("Cargo.toml", '[package]\nname = "trail"\nversion = "0.1.0"\nedition = "2021"\n')
     write("src/main.rs", 'fn main() {\n    println!("Follow your work.");\n}\n')
     write("README.md", "# Trail\n\nA small workspace for your next idea.\n")
