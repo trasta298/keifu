@@ -44,6 +44,19 @@ show_tags = false
 
 TUI 上では `t` キーでタグ表示を切り替えられます。
 
+## ファイル差分の表示
+
+デフォルトでは、ファイル差分を全画面で表示します。
+コミット詳細とファイル一覧を残し、グラフの位置に差分を表示するには:
+
+```toml
+[ui]
+# "fullscreen"（デフォルト）または "replace"
+file_view = "replace"
+```
+
+`keifu --file-view replace` を指定すると、その起動時だけ設定を上書きできます。
+
 ### オプション一覧
 
 | キー | 型 | デフォルト | 説明 |
@@ -54,6 +67,7 @@ TUI 上では `t` キーでタグ表示を切り替えられます。
 | `fetch_interval` | integer | `60` | リモート fetch の間隔（秒）（最小: 10） |
 | `graph.show_remote_branches` | bool | `true` | リモートブランチと、リモートブランチからのみ到達可能なコミットを表示する |
 | `graph.show_tags` | bool | `true` | コミットにタグラベルを表示する |
+| `ui.file_view` | string | `"fullscreen"` | 差分を全画面、またはグラフの位置（`"replace"`）に表示する |
 
 ### 自動更新を無効にする
 
